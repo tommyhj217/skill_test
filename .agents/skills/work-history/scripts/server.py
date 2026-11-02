@@ -16,6 +16,8 @@ import db
 import runner
 import runners
 import skills_registry as reg
+import jira_sync
+import os
 
 UI_FILE = Path(__file__).resolve().parent.parent / "ui" / "index.html"
 
@@ -59,7 +61,7 @@ class Handler(BaseHTTPRequestHandler):
             me = dict(db.get_or_create_user(conn, self.current_user))
             users = [dict(r) for r in conn.execute(
                 "SELECT username, display_name, role FROM users ORDER BY username")] if me["role"] == "admin" else []
-            return self._send(200, {"me": me, "users": users,
+            return self._send(200, {"me": me, "users": users, "jira": jira_sync.default_source(),
                                     "runner": self.default_runner(), "runners": runners.available()})
         target = self._target_user(conn, qs)
         if target is None:
@@ -83,6 +85,25 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, {"activity": act, "actions": reg.suggest(act),
                                     "can_run": target == self.current_user,
                                     "runner": self.default_runner(), "runners": runners.available()})
+        if u.path == "/api/agents":
+            everyone = g("all") == "1" and self._is_admin(conn)
+            return self._send(200, db.list_agents(conn, None if everyone else target, g("status")))
+        if u.path == "/api/agents/stats":
+            return self._send(200, db.agent_stats(conn, target))
+        if len(parts) == 3 and parts[:2] == ["api", "agents"] and parts[2].isdigit():
+            ag = db.get_agent(conn, int(parts[2]))
+            if not ag or (ag["assignee"] != target and not self._is_admin(conn)):
+                return self._send(404, {"error": "not found"})
+            action = self._agent_action(ag)
+            return self._send(200, {
+                "agent": ag, "action": action, "runs": db.agent_runs(conn, ag["id"]),
+                "team": [{k: x[k] for k in ("id", "skill_name", "role", "assignee", "status")}
+                         for x in db.list_agents(conn, model_key=ag["jira_key"])],
+                "comments": [dict(r) for r in conn.execute(
+                    "SELECT id, status, created_by, created_at, body FROM jira_outbox WHERE agent_id=? ORDER BY id DESC",
+                    (ag["id"],))],
+                "can_run": ag["assignee"] == self.current_user and action is not None,
+                "jira_mode": jira_sync.default_source()})
         if u.path == "/api/runs":
             return self._send(200, db.list_runs(conn, target))
         if len(parts) == 3 and parts[:2] == ["api", "runs"] and parts[2].isdigit():
@@ -93,6 +114,35 @@ class Handler(BaseHTTPRequestHandler):
             events = [json.loads(x) for x in run.pop("events").splitlines() if x]
             return self._send(200, {**run, "events": events[since:], "next": len(events)})
         self._send(404, {"error": "not found"})
+
+    def _is_admin(self, conn):
+        return db.get_or_create_user(conn, self.current_user)["role"] == "admin"
+
+    @staticmethod
+    def _ctx(ag):
+        return {**ag["fields"], "role": ag["role"], "assignee": ag["assignee"]}
+
+    def _agent_action(self, ag):
+        action = reg.agent_action(ag["skill_name"])
+        if not action:
+            return None
+        ctx = self._ctx(ag)
+        return {**action, "inputs": [{**i, "default": reg.render_prompt(str(i.get("default", "")), {}, ctx)}
+                                     for i in action.get("inputs", [])]}
+
+    def _resolve_agent(self, conn, b):
+        """(agent, action, prompt) for a run on one of *my* agents."""
+        ag = db.get_agent(conn, int(b["agent_id"]))
+        if not ag or ag["assignee"] != self.current_user:
+            return None, None, None
+        action = reg.agent_action(ag["skill_name"])
+        if not action:
+            return ag, None, None
+        ctx = self._ctx(ag)
+        values = {i["name"]: (b.get("values") or {}).get(i["name"], i.get("default", ""))
+                  for i in action.get("inputs", [])}
+        values = {k: reg.render_prompt(str(v), {}, ctx) for k, v in values.items()}
+        return ag, action, reg.render_prompt(action["prompt"], values, ctx)
 
     def default_runner(self):
         return self.runner_mode or runner.default_runner()
@@ -133,12 +183,49 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         u = urlparse(self.path)
+        parts = u.path.strip("/").split("/")
+        if u.path == "/api/jira/webhook":
+            secret = os.environ.get("JIRA_WEBHOOK_SECRET")
+            if secret and (parse_qs(u.query).get("secret") or [None])[0] != secret:
+                return self._send(403, {"error": "bad secret"})
+            return self._send(200, jira_sync.handle_webhook(db.connect(self.db_path), self._body()))
+        if u.path == "/api/jira/sync":
+            conn = db.connect(self.db_path)
+            if not self._is_admin(conn):
+                return self._send(403, {"error": "admin only"})
+            try:
+                return self._send(200, jira_sync.ingest(conn, jira_sync.fetch_issues()))
+            except Exception as e:
+                return self._send(502, {"error": f"Jira 동기화 실패: {e}"})
+        if len(parts) == 4 and parts[:2] == ["api", "agents"] and parts[2].isdigit() and parts[3] == "comment":
+            conn = db.connect(self.db_path)
+            ag = db.get_agent(conn, int(parts[2]))
+            if not ag or ag["assignee"] != self.current_user:
+                return self._send(404, {"error": "not found"})
+            b = self._body()
+            text = b.get("text")
+            if not text and b.get("run_id"):
+                run = db.get_run(conn, int(b["run_id"]), self.current_user)
+                evs = [json.loads(x) for x in (run or {}).get("events", "").splitlines() if x]
+                text = next((e["text"] for e in reversed(evs) if e["type"] == "result"), None)
+                if text:
+                    label = (reg.agent_action(ag["skill_name"]) or {}).get("label", ag["skill_name"])
+                    text = f"[{label}] {self.current_user} · work-history run #{b['run_id']}\n\n{text}"
+            if not text:
+                return self._send(400, {"error": "보낼 내용이 없습니다"})
+            return self._send(200, jira_sync.post_comment(conn, ag["jira_key"], text, ag["id"],
+                                                          b.get("run_id"), self.current_user))
         if u.path in ("/api/runs", "/api/runs/preview"):
             conn = db.connect(self.db_path)
             b = self._body()
-            act, action, prompt = self._resolve_action(conn, b)
+            agent = None
+            if b.get("agent_id"):
+                agent, action, prompt = self._resolve_agent(conn, b)
+                act = None
+            else:
+                act, action, prompt = self._resolve_action(conn, b)
             if not action:
-                return self._send(404, {"error": "unknown activity or action"})
+                return self._send(404, {"error": "unknown activity, agent or action"})
             if not prompt:
                 return self._send(400, {"error": "empty prompt"})
             key, err = self._pick_runner(action, act, b.get("runner"))
@@ -153,7 +240,7 @@ class Handler(BaseHTTPRequestHandler):
             resume = act["session_id"] if action.get("resume") else None
             rid = runner.start(conn, self.db_path, self.current_user, prompt, action["id"], key,
                                skill_name=skill, source_activity=act, resume_session=resume,
-                               workdir=self.workdir)
+                               workdir=self.workdir, agent=agent, ctx=self._ctx(agent) if agent else None)
             return self._send(201, {"id": rid, "prompt": prompt, "runner": key})
         if u.path != "/api/activities":
             return self._send(404, {"error": "not found"})
@@ -173,6 +260,14 @@ class Handler(BaseHTTPRequestHandler):
         return None
 
     def do_PATCH(self):
+        parts = urlparse(self.path).path.strip("/").split("/")
+        if len(parts) == 3 and parts[:2] == ["api", "agents"] and parts[2].isdigit():
+            conn = db.connect(self.db_path)
+            ag = db.get_agent(conn, int(parts[2]))
+            if not ag or ag["assignee"] != self.current_user:
+                return self._send(404, {"ok": False})
+            ok = db.set_agent_status(conn, ag["id"], self._body().get("status"))
+            return self._send(200 if ok else 400, {"ok": ok})
         aid = self._id_from_path(urlparse(self.path).path)
         if aid is None:
             return self._send(404, {"error": "not found"})
@@ -204,7 +299,16 @@ def main():
     p.add_argument("--runner", choices=[*runners.ADAPTERS, "mock"], default=None,
                    help="default runner for UI actions (default: first installed of runners.json, else mock)")
     p.add_argument("--workdir", default=None, help="cwd for claude runs (default: current dir)")
+    p.add_argument("--demo", action="store_true",
+                   help="load sample history + sample Jira models if the DB is empty, default runner = mock")
     a = p.parse_args()
+    if a.demo:
+        conn = db.connect(a.db)
+        if not conn.execute("SELECT 1 FROM models LIMIT 1").fetchone():
+            from seed import seed
+            print("demo data:", seed(a.db), flush=True)
+        a.runner = a.runner or "mock"
+        a.user = a.user or "alice"
     Handler.workdir = a.workdir
     Handler.runner_mode = a.runner
     Handler.current_user = a.user or db.resolve_username()

@@ -9,6 +9,7 @@ import os
 import subprocess
 import threading
 import time
+from pathlib import Path
 from datetime import datetime, timezone
 
 import db
@@ -60,25 +61,32 @@ def _finish(run_id, db_path, status, session_id=None, runner_key=None):
 
 
 def start(conn, db_path, username, prompt, action_id, runner_key, skill_name=None,
-          source_activity=None, resume_session=None, workdir=None):
+          source_activity=None, resume_session=None, workdir=None, agent=None, ctx=None):
     user = db.get_or_create_user(conn, username)
     src_id = source_activity["id"] if source_activity else None
-    project = (source_activity or {}).get("project")
+    project = (source_activity or {}).get("project") or (agent or {}).get("model_code")
     act_id = db.add_activity(conn, username, "skill" if skill_name else "prompt",
                              f"[UI·{runner_key}] {prompt}"[:300], skill_name=skill_name,
                              status="in_progress", detail=f"from activity #{src_id}" if src_id else None,
-                             project=project, runner="web-ui")
+                             project=project, runner="web-ui",
+                             tags=(agent or {}).get("jira_key"))
     cur = conn.execute(
         """INSERT INTO runs(user_id, source_activity_id, result_activity_id, action_id, skill_name,
-                            prompt, mode, status, session_id, started_at, events)
-           VALUES (?,?,?,?,?,?,?,?,?,?, '')""",
+                            prompt, mode, status, session_id, started_at, events, agent_id)
+           VALUES (?,?,?,?,?,?,?,?,?,?, '', ?)""",
         (user["id"], src_id, act_id, action_id, skill_name, prompt, runner_key, "running",
-         resume_session, _now()))
+         resume_session, _now(), (agent or {}).get("id")))
+    if agent and agent.get("status") == "todo":
+        db.set_agent_status(conn, agent["id"], "in_progress")
     conn.commit()
     run_id = cur.lastrowid
-    target = _run_mock if runner_key == "mock" else _run_cli
-    threading.Thread(target=target, args=(run_id, db_path, runner_key, prompt, resume_session, workdir),
-                     daemon=True).start()
+    if runner_key == "mock":
+        args = (run_id, db_path, runner_key, prompt, resume_session, workdir, skill_name, ctx)
+        target = _run_mock
+    else:
+        args = (run_id, db_path, runner_key, prompt, resume_session, workdir)
+        target = _run_cli
+    threading.Thread(target=target, args=args, daemon=True).start()
     return run_id
 
 
@@ -131,7 +139,19 @@ def _run_cli(run_id, db_path, key, prompt, resume, workdir):
         _finish(run_id, db_path, status, session_id or resume, key)
 
 
-def _run_mock(run_id, db_path, key, prompt, resume, workdir):
+def _mock_result(prompt, skill, ctx):
+    """Use the skill's examples/sample_output.md (filled with model fields) when it has one."""
+    if skill:
+        import skills_registry as reg
+        sk = reg.load_skills().get(skill)
+        src = sk and sk.get("source")
+        sample = Path(src) / "examples" / "sample_output.md" if src and src != "catalog" else None
+        if sample and sample.exists():
+            return reg.render_prompt(sample.read_text(encoding="utf-8"), {}, ctx or {}, keep_newlines=True)
+    return None
+
+
+def _run_mock(run_id, db_path, key, prompt, resume, workdir, skill=None, ctx=None):
     steps = [
         ("meta", f"[mock runner] prompt: {prompt}" + (f" (resume {resume})" if resume else "")),
         ("tool", "Read README.md"),
@@ -142,7 +162,7 @@ def _run_mock(run_id, db_path, key, prompt, resume, workdir):
     for t, text in steps:
         time.sleep(0.4)
         _append(run_id, db_path, type=t, text=text)
-    result = (f"## 결과 요약\n\n**요청**: {prompt}\n\n"
+    result = _mock_result(prompt, skill, ctx) or (f"## 결과 요약\n\n**요청**: {prompt}\n\n"
               "| 항목 | 상태 | 비고 |\n|---|---|---|\n"
               "| 파일 분석 | 완료 | 3개 파일 |\n| 이슈 | 2건 | 1건 수정 권장 |\n| 테스트 | 통과 | 12/12 |\n\n"
               "- 다음 단계: 수정 사항을 커밋하고 PR 생성\n- `mock` 모드 출력입니다")

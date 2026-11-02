@@ -1,0 +1,31 @@
+{
+  "label": "릴리즈 노트",
+  "icon": "📝",
+  "inputs": [
+    {
+      "name": "audience",
+      "label": "대상",
+      "type": "select",
+      "options": [
+        "내부",
+        "고객"
+      ],
+      "default": "내부"
+    },
+    {
+      "name": "language",
+      "label": "언어",
+      "type": "select",
+      "options": [
+        "ko",
+        "en"
+      ],
+      "default": "ko"
+    }
+  ],
+  "prompt": "/model-release-note {jira_key} ({model_code}) 릴리즈 노트 — 대상: {audience}, 언어: {language}",
+  "output": "markdown",
+  "agent": true,
+  "role": "pm",
+  "applies_to": {}
+}

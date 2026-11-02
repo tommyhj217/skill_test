@@ -12,6 +12,7 @@
             --accent:#748ffc; --accent-soft:#232a45; }
   }
   * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
   html, body { height:100%; }
   body { margin:0; font:14px/1.5 system-ui,-apple-system,"Segoe UI","Noto Sans KR",sans-serif; background:var(--bg); color:var(--fg);
          display:flex; flex-direction:column; }
@@ -47,6 +48,23 @@
   .pill { display:inline-block; padding:0 7px; border-radius:99px; font-size:11px; border:1px solid var(--line); color:var(--muted); }
   .s-success { color:var(--ok); } .s-failed, .s-cancelled { color:var(--bad); } .s-in_progress, .s-running { color:var(--wip); } .s-done { color:var(--ok); }
   .tag { color:var(--accent); }
+  .tabs { display:flex; gap:4px; padding:10px 10px 0; }
+  .tabs button { flex:1; border-radius:7px 7px 0 0; border-bottom:none; background:var(--soft); color:var(--muted); }
+  .tabs button.on { background:var(--card); color:var(--fg); font-weight:600; border-color:var(--accent); }
+  .group { padding:8px 12px 4px; font-size:12px; color:var(--muted); background:var(--soft); border-bottom:1px solid var(--line);
+           display:flex; justify-content:space-between; gap:8px; position:sticky; top:0; }
+  .group b { color:var(--fg); }
+  .st-todo { color:var(--muted); } .st-in_progress { color:var(--wip); } .st-done { color:var(--ok); }
+  .seg { display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .seg button { border:none; border-radius:0; border-right:1px solid var(--line); }
+  .seg button:last-child { border-right:none; } .seg button.on { background:var(--accent); color:#fff; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { border:1px solid var(--line); border-radius:99px; padding:2px 10px; font-size:12px; }
+  .chip.me { border-color:var(--accent); }
+  .card { border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin:10px 0; }
+  .mini { width:100%; border-collapse:collapse; font-size:13px; }
+  .mini td { padding:4px 6px; border-bottom:1px solid var(--line); }
+  .mini tr[data-run] { cursor:pointer; } .mini tr[data-run]:hover { background:var(--soft); }
 
   /* split workspace */
   .split { display:flex; flex:1; min-width:0; min-height:0; }
@@ -94,19 +112,27 @@
 </head>
 <body>
 <header>
-  <h1>🗂 AI 작업 이력</h1>
+  <h1>🧩 모델 에이전트 · 작업 이력</h1>
   <div class="who">
     <span>접속 사용자: <b id="me">…</b></span>
     <select id="as" hidden title="관리자: 다른 사용자 보기"></select>
     <span class="badge" id="runnerBadge"></span>
+    <span class="badge" id="jiraBadge"></span>
+    <button class="ghost" id="syncBtn" hidden title="Jira에서 모델을 다시 가져와 에이전트 생성">⟳ Jira 동기화</button>
     <button class="ghost" id="runsBtn" title="실행 기록 열기">▶ 실행 기록</button>
     <button class="ghost" id="resetLayout" title="분할 초기화">⟲ 레이아웃</button>
   </div>
 </header>
 <div id="app">
   <aside id="left">
+    <div class="tabs"><button data-mode="agents">🧩 내 에이전트</button><button data-mode="history">🗂 작업 이력</button></div>
     <div class="tiles" id="tiles"></div>
-    <div class="filters">
+    <div class="filters" id="agentFilters">
+      <input id="aq" placeholder="검색 (Jira 키·모델 코드·에이전트)">
+      <select id="astatus"><option value="">모든 상태</option><option value="todo">할 일</option><option value="in_progress">진행 중</option><option value="done">완료</option></select>
+      <select id="ascope" hidden><option value="me">내 것만</option><option value="all">팀 전체 (관리자)</option></select>
+    </div>
+    <div class="filters" id="histFilters">
       <input id="q" placeholder="검색 (요약·태그·스킬)">
       <select id="kind"><option value="">모든 유형</option><option>prompt</option><option>tool</option><option>skill</option><option>note</option></select>
       <select id="status"><option value="">모든 상태</option><option>success</option><option>failed</option><option>in_progress</option></select>
@@ -125,11 +151,48 @@ const api = (p, o) => fetch(p, o).then(async r => ({ ok: r.ok, status: r.status,
 const apiList = p => fetch(p).then(r => r.json());
 const store = { get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
                 set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-let me = null, runnerMode = '', runnerList = [], selectedId = null;
+let me = null, runnerMode = '', runnerList = [], selectedId = null, deb;
 const asParam = () => { const v = $('#as').value; return v && me && v !== me.username ? `&as=${encodeURIComponent(v)}` : ''; };
 
-/* ───────────── left: history list ───────────── */
-async function loadLeft() {
+/* ───────────── left: agents (default) / history ───────────── */
+const ST_LABEL = { todo: '할 일', in_progress: '진행 중', done: '완료' };
+let leftMode = store.get('wh.leftMode', 'agents'), skillMeta = {}, selectedAgent = null;
+const skillLabel = n => skillMeta[n] ? `${skillMeta[n].icon || ''} ${skillMeta[n].label}` : n;
+function setMode(m) {
+  leftMode = m; store.set('wh.leftMode', m);
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.mode === m));
+  $('#agentFilters').hidden = m !== 'agents'; $('#histFilters').hidden = m !== 'history';
+  loadLeft();
+}
+document.querySelector('.tabs').onclick = e => { if (e.target.dataset.mode) setMode(e.target.dataset.mode); };
+function loadLeft() { return leftMode === 'agents' ? loadAgents() : loadHistory(); }
+
+async function loadAgents() {
+  const s = await apiList('/api/agents/stats?x=1' + asParam());
+  $('#tiles').innerHTML = [['내 에이전트', s.total], ['할 일', s.todo], ['진행 중', s.in_progress], ['완료', s.done]]
+    .map(([l, v]) => `<div class="tile"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
+  const p = new URLSearchParams();
+  if ($('#astatus').value) p.set('status', $('#astatus').value);
+  if ($('#ascope').value === 'all') p.set('all', '1');
+  let rows = await apiList('/api/agents?' + p + asParam());
+  const q = $('#aq').value.trim().toLowerCase();
+  if (q) rows = rows.filter(a => [a.jira_key, a.model_code, a.model_name, a.skill_name, skillLabel(a.skill_name)].join(' ').toLowerCase().includes(q));
+  const groups = {};
+  for (const a of rows) (groups[a.jira_key] ??= []).push(a);
+  $('#list').innerHTML = rows.length ? Object.values(groups).map(g => `
+    <div class="group"><span><b>${esc(g[0].jira_key)}</b> · ${esc(g[0].model_code)} · ${esc(g[0].model_name)}</span>
+      <span>${g[0].due ? '마감 ' + esc(g[0].due.slice(5)) : ''}</span></div>
+    ${g.map(a => `<div class="item ${a.id === selectedAgent ? 'sel' : ''}" data-agent="${a.id}">
+      <div class="sum">${esc(skillLabel(a.skill_name))}</div>
+      <div class="st-${esc(a.status)}" style="font-size:12px">${esc(ST_LABEL[a.status] || a.status)}</div>
+      <div class="meta"><span class="pill">${esc(a.role || '-')}</span><span>${esc(a.assignee || '미배정')}</span>
+        <span>${esc(a.product_line || '')}</span>${a.last_run ? `<span>최근 실행 ${fmt(a.last_run.started_at)}</span>` : ''}</div>
+    </div>`).join('')}`).join('') : '<div class="empty">배정된 에이전트가 없습니다</div>';
+}
+$('#aq').addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(loadAgents, 200); });
+$('#astatus').onchange = $('#ascope').onchange = () => loadAgents();
+
+async function loadHistory() {
   const s = await apiList('/api/stats?x=1' + asParam());
   $('#tiles').innerHTML = [['활동', s.total], ['세션', s.sessions], ['스킬', s.by_kind.skill || 0], ['실패', s.by_status.failed || 0]]
     .map(([l, v]) => `<div class="tile"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
@@ -147,12 +210,14 @@ async function loadLeft() {
 }
 $('#list').addEventListener('click', e => {
   const it = e.target.closest('.item'); if (!it) return;
+  document.querySelectorAll('.item.sel').forEach(x => x.classList.remove('sel')); it.classList.add('sel');
+  if (it.dataset.agent) { selectedAgent = +it.dataset.agent; setView(focusId, { view: 'agent', id: selectedAgent }); return; }
   selectedId = +it.dataset.id;
   document.querySelectorAll('.item.sel').forEach(x => x.classList.remove('sel')); it.classList.add('sel');
   setView(focusId, { view: 'activity', id: selectedId });
 });
-let deb; $('#q').addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(loadLeft, 250); });
-$('#kind').onchange = $('#status').onchange = loadLeft;
+$('#q').addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(loadLeft, 250); });
+$('#kind').onchange = $('#status').onchange = loadHistory;
 $('#as').onchange = () => { loadLeft(); forEachPane(p => setView(p.id, { view: 'empty' })); };
 
 /* left gutter resize */
@@ -258,12 +323,12 @@ function setView(id, state) {
   stopTimer(id);
   p.state = state; save();
   const body = paneEls[id]?.querySelector('.pb'); if (!body) return;
-  ({ empty: viewEmpty, activity: viewActivity, form: viewForm, run: viewRun, runs: viewRuns }[state.view] || viewEmpty)(id, body, state);
+  ({ empty: viewEmpty, activity: viewActivity, agent: viewAgent, form: viewForm, run: viewRun, runs: viewRuns }[state.view] || viewEmpty)(id, body, state);
 }
 
 function viewEmpty(id, body) {
   setTitle(id, '빈 창');
-  body.innerHTML = `<div class="empty">왼쪽 이력을 클릭하면 이 창에 상세와 <b>이어서 할 작업</b>이 나타납니다.<br><br>
+  body.innerHTML = `<div class="empty">왼쪽에서 <b>에이전트</b>를 고르면 모델 정보와 실행 폼이,<br><b>작업 이력</b>을 고르면 이어서 할 작업이 이 창에 나타납니다.<br><br>
     창 머리의 ◫ / ⊟ 로 영역을 좌우·위아래로 나눌 수 있어요.<br>(파란 테두리 창이 현재 선택된 창)</div>`;
 }
 
@@ -305,13 +370,19 @@ function viewForm(id, body, st) {
   const x = st.action;
   setTitle(id, `${x.icon || ''} ${x.label}`);
   body.innerHTML = `
-    <div class="crumb"><a data-back>← 이력 #${st.activityId}</a></div>
+    <div class="crumb"><a data-back>← ${st.agentId ? '에이전트' : '이력'} #${st.agentId || st.activityId}</a></div>
     <h2>${esc(x.icon || '')} ${esc(x.label)}</h2>
-    <p class="note">${esc(x.description || x.reason || '')}</p>
+    <p class="note">${esc(x.description || x.reason || '')}</p><div class="fm"></div>`;
+  body.querySelector('[data-back]').onclick = () => setView(id, st.agentId ? { view: 'agent', id: st.agentId } : { view: 'activity', id: st.activityId });
+  mountForm(id, body.querySelector('.fm'), st);
+}
+function mountForm(id, body, st) {
+  const x = st.action;
+  body.innerHTML = `
     <form class="form">${(x.inputs || []).map(i => `<label>${esc(i.label || i.name)}</label>${inputHtml(i)}`).join('') || '<p class="note">입력 없이 바로 실행됩니다.</p>'}
       <label>실행할 러너</label>
       <select name="__runner" ${x.resume ? 'disabled' : ''}>
-        <option value="">자동 (이력의 러너 → 기본 러너)</option>
+        <option value="">자동 (${st.agentId ? '기본 러너' : '이력의 러너 → 기본 러너'})</option>
         ${runnerList.filter(r => !x.runners || x.runners.includes(r.id) || r.id === 'mock').map(r =>
           `<option value="${esc(r.id)}" ${r.installed ? '' : 'disabled'} ${x.runner === r.id ? 'selected' : ''}>${esc(r.label)}${r.installed ? '' : ' (미설치)'}</option>`).join('')}
       </select>
@@ -322,34 +393,44 @@ function viewForm(id, body, st) {
     </form>`;
   const form = body.querySelector('form'), pv = body.querySelector('.preview');
   const values = () => Object.fromEntries([...new FormData(form)].filter(([k]) => !k.startsWith('__')));
-  const payload = () => JSON.stringify({ activity_id: st.activityId, action_id: x.id, values: values(), runner: form.__runner.value || null });
+  const payload = () => JSON.stringify({ ...(st.agentId ? { agent_id: st.agentId } : { activity_id: st.activityId }),
+                                          action_id: x.id, values: values(), runner: form.__runner.value || null });
   const preview = async () => {
     const r = await api('/api/runs/preview', { method: 'POST', body: payload() });
     pv.textContent = r.ok ? (r.resume ? '(resume) ' : '') + r.prompt + (r.error ? '\n⚠ ' + r.error : '') : '⚠ ' + (r.error || '');
     body.querySelector('.rb').textContent = 'runner: ' + (r.runner || '없음');
   };
   let t; form.addEventListener('input', () => { clearTimeout(t); t = setTimeout(preview, 200); }); preview();
-  body.querySelector('[data-back]').onclick = () => setView(id, { view: 'activity', id: st.activityId });
   form.onsubmit = async e => {
     e.preventDefault();
     const r = await api('/api/runs', { method: 'POST', body: payload() });
     if (!r.ok) { pv.textContent = '⚠ ' + (r.error || '실행 실패'); return; }
-    const state = { view: 'run', runId: r.id, output: x.output, activityId: st.activityId };
-    if (form.__split.checked) splitPane(id, 'col', state); else setView(id, state);
+    const state = { view: 'run', runId: r.id, output: x.output, activityId: st.activityId, agentId: st.agentId };
+    if (form.__split.checked) {
+      splitPane(id, 'col', state);
+      if (st.agentId && findPane(id)?.state.view === 'agent') setView(id, { view: 'agent', id: st.agentId });  // refresh status/runs
+    } else setView(id, state);
     loadLeft();
   };
 }
 
 function viewRun(id, body, st) {
   setTitle(id, `▶ 실행 #${st.runId}`);
-  body.innerHTML = `<div class="crumb">${st.activityId ? `<a data-back>← 이력 #${st.activityId}</a> · ` : ''}<a data-runs>실행 기록</a></div>
+  body.innerHTML = `<div class="crumb">${st.agentId ? `<a data-agent>← 에이전트 #${st.agentId}</a> · ` : ''}${st.activityId ? `<a data-back>← 이력 #${st.activityId}</a> · ` : ''}<a data-runs>실행 기록</a></div>
     <h2 class="rt">실행 #${st.runId}</h2><div class="note rp"></div>
     <div class="row-btns"><span class="rs"></span><button class="cancel" hidden>■ 중지</button>
-      <button class="cont" hidden>↪ 이 결과에서 이어서 하기</button></div>
+      <button class="cont" hidden>↪ 이 결과에서 이어서 하기</button>
+      <button class="jira" hidden>📤 Jira에 결과 올리기</button><span class="note jr"></span></div>
     <div class="evs"></div><div class="result"></div>`;
   const q = s => body.querySelector(s);
   q('[data-back]')?.addEventListener('click', () => setView(id, { view: 'activity', id: st.activityId }));
   q('[data-runs]').onclick = () => setView(id, { view: 'runs' });
+  q('[data-agent]')?.addEventListener('click', () => setView(id, { view: 'agent', id: st.agentId }));
+  q('.jira').onclick = async () => {
+    const r = await api(`/api/agents/${st.agentId}/comment`, { method: 'POST', body: JSON.stringify({ run_id: st.runId }) });
+    q('.jr').textContent = r.ok ? (r.status === 'sent' ? '✓ Jira에 코멘트를 올렸습니다' : r.status === 'sample' ? '✓ ' + r.response : '⚠ ' + r.response) : '⚠ ' + r.error;
+    if (r.ok && r.status !== 'failed') q('.jira').disabled = true;
+  };
   q('.cancel').onclick = () => api(`/api/runs/${st.runId}`, { method: 'DELETE' });
   let since = 0, lastText = null;
   const poll = async () => {
@@ -370,10 +451,54 @@ function viewRun(id, body, st) {
     if (r.status === 'running') paneTimers[id] = setTimeout(poll, 700);
     else {
       loadLeft();
+      if (st.agentId && r.status === 'done' && viewingSelf()) q('.jira').hidden = false;
       if (r.result_activity_id) { q('.cont').hidden = false; q('.cont').onclick = () => setView(id, { view: 'activity', id: r.result_activity_id }); }
     }
   };
   poll();
+}
+
+const viewingSelf = () => !$('#as').value || $('#as').value === me.username;
+
+async function viewAgent(id, body, st) {
+  body.innerHTML = '<div class="note">불러오는 중…</div>';
+  const d = await api(`/api/agents/${st.id}?x=1${asParam()}`);
+  if (!d.ok) { body.innerHTML = `<div class="empty">${esc(d.error || '찾을 수 없음')}</div>`; return; }
+  const a = d.agent, f = a.fields, x = d.action;
+  setTitle(id, `${a.jira_key} · ${skillLabel(a.skill_name)}`);
+  const link = (u, t) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t || u)}</a>` : '-';
+  body.innerHTML = `
+    <div class="crumb">${esc(a.product_line || '')} · ${esc(a.model_status || '')}</div>
+    <h2>${esc(skillLabel(a.skill_name))} — ${esc(a.jira_key)} ${esc(a.model_code)}</h2>
+    <div class="row-btns" style="margin-top:0">
+      <span class="seg">${['todo', 'in_progress', 'done'].map(s => `<button data-st="${s}" class="${a.status === s ? 'on' : ''}" ${d.can_run ? '' : 'disabled'}>${ST_LABEL[s]}</button>`).join('')}</span>
+      <span class="note">담당 ${esc(a.assignee || '미배정')} (${esc(a.role || '-')})</span>
+    </div>
+    <div class="card"><dl>
+      <dt>모델</dt><dd>${esc(a.model_name)} (${esc(a.model_code)})</dd>
+      <dt>Jira</dt><dd>${link(a.url, a.jira_key)} · ${esc(a.model_status || '')}</dd>
+      <dt>마감 / 출시</dt><dd>${esc(a.due || '-')} / ${esc(f.launch_date || '-')}</dd>
+      <dt>지역</dt><dd>${esc(f.regions || '-')}</dd>
+      <dt>사양서</dt><dd>${link(f.spec_url)}</dd></dl></div>
+    <h3>이 모델의 다른 에이전트</h3>
+    <div class="chips">${d.team.map(t => `<span class="chip ${t.id === a.id ? 'me' : ''}">${esc(skillLabel(t.skill_name))} · ${esc(t.assignee || '미배정')} · <span class="st-${esc(t.status)}">${esc(ST_LABEL[t.status])}</span></span>`).join('')}</div>
+    <h3>실행</h3>
+    ${!x ? '<p class="note">이 에이전트의 스킬이 설치되어 있지 않습니다.</p>' : d.can_run ? '<div class="fm"></div>' : '<p class="note">담당자만 실행할 수 있어요 (보기 전용).</p>'}
+    <h3>실행 결과 (${d.runs.length})</h3>
+    ${d.runs.length ? `<table class="mini">${d.runs.map(r => `<tr data-run="${r.id}" title="클릭: 아래 창에서 결과 보기"><td>#${r.id}</td><td>${fmt(r.started_at)}</td>
+      <td class="s-${esc(r.status)}">${esc(r.status)}</td><td>${esc(r.mode)}</td></tr>`).join('')}</table>` : '<p class="note">아직 실행한 적이 없어요.</p>'}
+    ${d.comments.length ? `<h3>Jira 코멘트 (${d.comments.length})</h3><table class="mini">${d.comments.map(c => `<tr><td>${fmt(c.created_at)}</td><td>${esc(c.status)}</td><td>${esc(c.body.split('\n')[0])}</td></tr>`).join('')}</table>` : ''}
+    <p class="note">Jira 모드: ${esc(d.jira_mode)}${d.jira_mode === 'sample' ? ' (샘플 데이터 · 코멘트는 로컬에만 저장)' : ''}</p>`;
+  if (x && d.can_run) mountForm(id, body.querySelector('.fm'), { agentId: a.id, action: x });
+  body.querySelector('.seg').onclick = async e => {
+    const s = e.target.dataset.st; if (!s) return;
+    await api(`/api/agents/${a.id}`, { method: 'PATCH', body: JSON.stringify({ status: s }) });
+    setView(id, st); loadLeft();
+  };
+  body.querySelector('.mini')?.addEventListener('click', e => {
+    const tr = e.target.closest('tr[data-run]'); if (!tr) return;
+    splitPane(id, 'col', { view: 'run', runId: +tr.dataset.run, output: x?.output, agentId: a.id });
+  });
 }
 
 async function viewRuns(id, body) {
@@ -419,6 +544,14 @@ function md(src) {
 }
 
 /* ───────────── boot ───────────── */
+$('#syncBtn').onclick = async () => {
+  $('#syncBtn').disabled = true;
+  const r = await fetch('/api/jira/sync', { method: 'POST', body: '{}' });
+  const res = await r.json().catch(() => ({}));
+  $('#syncBtn').disabled = false;
+  alert(r.ok ? `동기화 완료: 모델 ${res.length}개, 새 에이전트 ${res.reduce((n, x) => n + x.agents_created.length, 0)}개` : res.error);
+  loadLeft();
+};
 $('#runsBtn').onclick = () => setView(focusId, { view: 'runs' });
 $('#resetLayout').onclick = () => { forEachPane(p => { stopTimer(p.id); delete paneEls[p.id]; }); layout = newPane(); focusId = null; renderLayout(); };
 (async () => {
@@ -430,9 +563,12 @@ $('#resetLayout').onclick = () => { forEachPane(p => { stopTimer(p.id); delete p
     $('#as').hidden = false;
     $('#as').innerHTML = r.users.map(u => `<option value="${esc(u.username)}" ${u.username === me.username ? 'selected' : ''}>${esc(u.display_name)}</option>`).join('');
   }
+  try { for (const sk of await apiList('/api/skills')) skillMeta[sk.name] = sk; } catch {}
+  if (me.role === 'admin') { $('#ascope').hidden = false; $('#syncBtn').hidden = false; }
   renderLayout();
-  await loadLeft();
+  setMode(leftMode);
   runnerMode = r.runner || ''; runnerList = r.runners || [];
+  $('#jiraBadge').textContent = 'Jira: ' + (r.jira || '-');
   $('#runnerBadge').textContent = '기본 러너: ' + runnerMode;
   $('#runnerBadge').title = runnerList.map(x => `${x.label}: ${x.installed ? '설치됨' : '미설치'}`).join('\n');
 })();

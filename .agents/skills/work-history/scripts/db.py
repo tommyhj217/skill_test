@@ -69,6 +69,41 @@ CREATE TABLE IF NOT EXISTS runs (                -- actions launched from the UI
     ended_at           TEXT,
     events             TEXT NOT NULL DEFAULT ''   -- JSON lines
 );
+CREATE TABLE IF NOT EXISTS models (               -- Jira "model" issues
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    jira_key     TEXT NOT NULL UNIQUE,             -- e.g. MDL-101
+    model_code   TEXT,
+    name         TEXT,
+    product_line TEXT,
+    status       TEXT,
+    due          TEXT,
+    url          TEXT,
+    fields       TEXT NOT NULL DEFAULT '{}',       -- normalized fields (JSON)
+    synced_at    TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS agents (               -- agent (= skill) generated per model & role
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_id    INTEGER NOT NULL REFERENCES models(id) ON DELETE CASCADE,
+    skill_name  TEXT NOT NULL,
+    role        TEXT,
+    assignee    TEXT,                              -- username of the person responsible
+    status      TEXT NOT NULL DEFAULT 'todo',      -- todo | in_progress | done
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    UNIQUE(model_id, skill_name)
+);
+CREATE TABLE IF NOT EXISTS jira_outbox (          -- comments posted (or simulated) back to Jira
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    jira_key   TEXT NOT NULL,
+    agent_id   INTEGER,
+    run_id     INTEGER,
+    body       TEXT NOT NULL,
+    status     TEXT NOT NULL,                      -- sent | sample | failed
+    response   TEXT,
+    created_by TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_agents_assignee ON agents(assignee);
 CREATE INDEX IF NOT EXISTS idx_act_user_ts ON activities(user_id, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_act_session ON activities(session_id);
 """
@@ -85,7 +120,16 @@ def connect(db_path=None):
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn):
+    """Additive migrations for DBs created by earlier versions."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(runs)")}
+    if "agent_id" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN agent_id INTEGER")
+        conn.commit()
 
 
 def resolve_username():
@@ -208,6 +252,63 @@ def get_run(conn, run_id, username):
     r = conn.execute("""SELECT r.* FROM runs r JOIN users u ON u.id=r.user_id
                         WHERE r.id=? AND u.username=?""", (run_id, username)).fetchone()
     return dict(r) if r else None
+
+
+# ───────────── Jira models & agents ─────────────
+
+AGENT_SQL = """SELECT g.*, m.jira_key, m.model_code, m.name AS model_name, m.product_line,
+                      m.status AS model_status, m.due, m.url, m.fields
+               FROM agents g JOIN models m ON m.id = g.model_id"""
+
+
+def _agent_row(r):
+    d = dict(r)
+    d["fields"] = json.loads(d.get("fields") or "{}")
+    return d
+
+
+def list_agents(conn, username=None, status=None, model_key=None):
+    sql, args = AGENT_SQL + " WHERE 1=1", []
+    if username:
+        sql += " AND g.assignee = ?"; args.append(username)
+    if status:
+        sql += " AND g.status = ?"; args.append(status)
+    if model_key:
+        sql += " AND m.jira_key = ?"; args.append(model_key)
+    sql += """ ORDER BY CASE g.status WHEN 'in_progress' THEN 0 WHEN 'todo' THEN 1 ELSE 2 END,
+               COALESCE(m.due, '9999'), m.jira_key, g.id"""
+    rows = [_agent_row(r) for r in conn.execute(sql, args)]
+    last = {r["agent_id"]: dict(r) for r in conn.execute(
+        """SELECT agent_id, id AS run_id, status AS run_status, started_at FROM runs
+           WHERE id IN (SELECT MAX(id) FROM runs WHERE agent_id IS NOT NULL GROUP BY agent_id)""")}
+    for r in rows:
+        r["last_run"] = last.get(r["id"])
+    return rows
+
+
+def get_agent(conn, agent_id):
+    r = conn.execute(AGENT_SQL + " WHERE g.id = ?", (agent_id,)).fetchone()
+    return _agent_row(r) if r else None
+
+
+def set_agent_status(conn, agent_id, status):
+    if status not in ("todo", "in_progress", "done"):
+        return False
+    conn.execute("UPDATE agents SET status=?, updated_at=? WHERE id=?", (status, now_iso(), agent_id))
+    conn.commit()
+    return True
+
+
+def agent_runs(conn, agent_id, limit=20):
+    return [dict(r) for r in conn.execute(
+        """SELECT id, prompt, mode, status, started_at, ended_at FROM runs WHERE agent_id=?
+           ORDER BY id DESC LIMIT ?""", (agent_id, limit))]
+
+
+def agent_stats(conn, username=None):
+    sql = "SELECT status, COUNT(*) c FROM agents" + (" WHERE assignee=?" if username else "") + " GROUP BY status"
+    by = {r["status"]: r["c"] for r in conn.execute(sql, (username,) if username else ())}
+    return {"total": sum(by.values()), **{k: by.get(k, 0) for k in ("todo", "in_progress", "done")}}
 
 
 def owned(conn, activity_id, username):

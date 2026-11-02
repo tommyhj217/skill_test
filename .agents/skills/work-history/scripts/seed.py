@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Generate deterministic sample data: 4 users, ~20 sessions, ~200 activities."""
+import json
 import random
 import uuid
 import sys
@@ -7,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import db  # noqa: E402
 from db import connect  # noqa: E402
 
 USERS = [
@@ -40,8 +42,8 @@ def seed(db_path=None, reset=False):
     rnd = random.Random(42)
     conn = connect(db_path)
     if reset:
-        conn.executescript("DELETE FROM runs; DELETE FROM activities; DELETE FROM sessions; DELETE FROM users;"
-                           "DELETE FROM sqlite_sequence;")
+        conn.executescript("DELETE FROM jira_outbox; DELETE FROM agents; DELETE FROM models; DELETE FROM runs;"
+                           "DELETE FROM activities; DELETE FROM sessions; DELETE FROM users; DELETE FROM sqlite_sequence;")
     base = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(hours=1)
     n_act = n_sess = 0
     for username, name, email, role in USERS:
@@ -84,7 +86,47 @@ def seed(db_path=None, reset=False):
             n_sess += 1
             n_act += len(rows)
     conn.commit()
-    return {"users": len(USERS), "sessions": n_sess, "activities": n_act}
+    jira = seed_jira(conn, base)
+    return {"users": len(USERS), "sessions": n_sess, "activities": n_act, **jira}
+
+
+# agent progress in the sample: (jira_key, skill) → status; "done" ones also get a finished run
+SAMPLE_PROGRESS = {
+    ("MDL-105", "model-spec-review"): "done", ("MDL-105", "model-test-plan"): "done",
+    ("MDL-105", "model-cert-check"): "done", ("MDL-105", "model-release-note"): "in_progress",
+    ("MDL-101", "model-spec-review"): "done", ("MDL-101", "model-test-plan"): "in_progress",
+    ("MDL-102", "model-cert-check"): "in_progress",
+}
+
+
+def seed_jira(conn, base):
+    """Import the sample Jira models (jira/samples) → models + agents, then fake some progress."""
+    import jira_sync
+    from runner import _mock_result
+    report = jira_sync.ingest(conn, jira_sync.fetch_issues("sample"))
+    runs = 0
+    for (key, skill), status in SAMPLE_PROGRESS.items():
+        ag = next((a for a in db.list_agents(conn, model_key=key) if a["skill_name"] == skill), None)
+        if not ag:
+            continue
+        db.set_agent_status(conn, ag["id"], status)
+        if status != "done":
+            continue
+        ctx = {**ag["fields"], "role": ag["role"], "assignee": ag["assignee"]}
+        result = _mock_result("", skill, ctx) or "샘플 결과"
+        uid = conn.execute("SELECT id FROM users WHERE username=?", (ag["assignee"],)).fetchone()["id"]
+        ts = (base - timedelta(days=2)).isoformat(timespec="seconds")
+        events = "\n".join(json.dumps(e, ensure_ascii=False) for e in [
+            {"type": "meta", "text": "[sample] seeded run"}, {"type": "result", "text": result}]) + "\n"
+        aid = db.add_activity(conn, ag["assignee"], "skill", f"[UI·mock] /{skill} {key}", skill_name=skill,
+                              ts=ts, runner="web-ui", project=ag["model_code"], tags=key)
+        conn.execute("""INSERT INTO runs(user_id, result_activity_id, action_id, skill_name, prompt, mode, status,
+                        started_at, ended_at, events, agent_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                     (uid, aid, f"skill:{skill}", skill, f"/{skill} {key} ({ag['model_code']})", "mock", "done",
+                      ts, ts, events, ag["id"]))
+        runs += 1
+    conn.commit()
+    return {"models": len(report), "agents": sum(len(r["agents_created"]) for r in report), "sample_runs": runs}
 
 
 if __name__ == "__main__":

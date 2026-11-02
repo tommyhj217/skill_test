@@ -1,0 +1,30 @@
+{
+  "label": "인증 체크리스트",
+  "icon": "✅",
+  "inputs": [
+    {
+      "name": "regions",
+      "label": "대상 지역",
+      "type": "text",
+      "default": "{regions}"
+    },
+    {
+      "name": "scope",
+      "label": "범위",
+      "type": "select",
+      "options": [
+        "전체",
+        "안전",
+        "EMC",
+        "무선",
+        "에너지"
+      ],
+      "default": "전체"
+    }
+  ],
+  "prompt": "/model-cert-check {jira_key} ({model_code}) 인증 체크리스트 — 지역: {regions}, 범위: {scope}, 출시: {launch_date}",
+  "output": "markdown",
+  "agent": true,
+  "role": "cert",
+  "applies_to": {}
+}

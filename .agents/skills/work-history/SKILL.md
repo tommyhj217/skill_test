@@ -27,8 +27,19 @@ can view (not modify) others.
   any installed runner (dropdown); results stream into split panes (◫ / ⊟).
 - **Install into another project / for other runners**:
   `python3 scripts/install.py --project /path/to/repo [--runners claude,codex,copilot,gemini]`
+- **Demo with sample Jira data**: `python3 scripts/server.py --demo` (alice, mock runner)
 - **Sample data** (demo only): `python3 scripts/db.py seed --reset`
-- **Tests**: `python3 tests/test_multi_runner.py -v`
+- **Tests**: `python3 tests/test_multi_runner.py -v && python3 tests/test_jira_agents.py -v`
+
+## Jira model agents
+When a model issue is registered in Jira, one agent per role is generated (spec review → dev,
+test plan → QA, certification → cert, release note → PM). Each agent is a skill in `.agents/skills/model-*`.
+- Import / refresh: `python3 scripts/jira_sync.py pull` (sample data unless `JIRA_BASE_URL` is set)
+- List: `python3 scripts/jira_sync.py agents [--user alice]` · model info: `jira_sync.py show MDL-101`
+- Auto-create on registration: point a Jira webhook (issue created/updated) at `POST /api/jira/webhook?secret=…`
+- In the UI the "내 에이전트" tab lists the connected user's agents grouped by model; running one fills the
+  form from the model's Jira fields, and the result can be posted back to the issue as a comment.
+- Field ids and role → person mapping: `jira/jira_mapping.json`; agents per product line: `jira/agent_templates.json`.
 
 ## Extending
 - New runner CLI → add an entry to `runners.json` (`run`, `resume`, `format`, `skill_syntax`).

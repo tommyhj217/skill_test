@@ -1,0 +1,36 @@
+{
+  "label": "사양 검토",
+  "icon": "📐",
+  "inputs": [
+    {
+      "name": "focus",
+      "label": "검토 범위",
+      "type": "select",
+      "options": [
+        "전체",
+        "전원",
+        "디스플레이",
+        "통신",
+        "기구"
+      ],
+      "default": "전체"
+    },
+    {
+      "name": "spec",
+      "label": "사양서 위치",
+      "type": "text",
+      "default": "{spec_url}"
+    },
+    {
+      "name": "notes",
+      "label": "추가 요청",
+      "type": "textarea",
+      "default": ""
+    }
+  ],
+  "prompt": "/model-spec-review {jira_key} ({model_code}) 사양 검토 — 범위: {focus}, 사양서: {spec} {notes}",
+  "output": "markdown",
+  "agent": true,
+  "role": "dev",
+  "applies_to": {}
+}

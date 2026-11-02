@@ -116,28 +116,40 @@ def link(target, dest, copy=False):
     return f"copy    {dest}"
 
 
+def bundle():
+    """work-history + the Jira model agent skills next to it (ui.json with "agent": true)."""
+    out = [SKILL_SRC]
+    for d in sorted(SKILL_SRC.parent.iterdir()):
+        ui = d / "ui.json"
+        if d != SKILL_SRC and ui.exists() and json.loads(ui.read_text(encoding="utf-8")).get("agent"):
+            out.append(d)
+    return out
+
+
 def install_project(root, runners, copy=False, github_link=False):
     root = root.resolve()
     log = []
-    canonical = root / ".agents" / "skills" / NAME
-    if canonical.resolve() != SKILL_SRC:
-        if canonical.exists():
-            log.append(f"exists  {canonical}")
-        else:
-            canonical.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(SKILL_SRC, canonical, ignore=shutil.ignore_patterns("data", "__pycache__"))
-            log.append(f"copy    {canonical}")
+    for src in bundle():
+        canonical = root / ".agents" / "skills" / src.name
+        if canonical.resolve() != src.resolve():
+            if canonical.exists():
+                log.append(f"exists  {canonical}")
+            else:
+                canonical.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copytree(src, canonical, ignore=shutil.ignore_patterns("data", "__pycache__"))
+                log.append(f"copy    {canonical}")
+        for r in runners:
+            if r in LINK_DIRS:
+                log.append(link(canonical, root / LINK_DIRS[r] / src.name, copy))
+            if r == "copilot" and github_link:
+                log.append(link(canonical, root / ".github" / "skills" / src.name, copy))
     for r in runners:
-        if r in LINK_DIRS:
-            log.append(link(canonical, root / LINK_DIRS[r] / NAME, copy))
-        if r == "copilot" and github_link:
-            log.append(link(canonical, root / ".github" / "skills" / NAME, copy))
         log.append(f"hooks   {HOOKS[r](root)}")
     return log
 
 
 def install_user(runners, copy=False):
-    return [link(SKILL_SRC, Path.home() / USER_DIRS[r] / NAME, copy) for r in runners]
+    return [link(src, Path.home() / USER_DIRS[r] / src.name, copy) for src in bundle() for r in runners]
 
 
 def main():

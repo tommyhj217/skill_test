@@ -133,7 +133,7 @@ def suggest(act, limit=6):
     ranked = sorted(skills.values(), key=lambda s: -_score(s, act))
     for sk in ranked:
         sc = _score(sk, act)
-        if sc <= 0 or len(actions) >= limit:
+        if sc <= 0 or len(actions) >= limit or sk.get("agent"):
             continue
         reason = "같은 스킬 다시 실행" if act.get("skill_name") == sk["name"] else "이 작업과 관련된 스킬"
         actions.append({**sk, "id": f"skill:{sk['name']}", "reason": reason, "score": sc})
@@ -149,15 +149,25 @@ def _is_real_session(sid):
     return bool(sid) and not sid.startswith(("sess_", "mock-"))
 
 
-def render_prompt(template, values, act):
-    ctx = {k: v for k, v in (act or {}).items() if v is not None}
+def render_prompt(template, values, act, keep_newlines=False):
+    ctx = {k: v for k, v in (act or {}).items() if v is not None and not isinstance(v, (dict, list))}
     ctx.update({k: v for k, v in values.items() if v is not None})
 
     def sub(m):
-        return str(ctx.get(m.group(1), ""))
+        return str(ctx.get(m.group(1), m.group(0) if keep_newlines else ""))
     out = re.sub(r"\{(\w+)\}", sub, template)
     out = re.sub(r"\{(\w+)\}", sub, out)  # second pass: defaults may contain {summary}
+    if keep_newlines:
+        return out
     return re.sub(r"[ \t]+", " ", out).strip()
+
+
+def agent_action(skill_name):
+    """The UI action (form) for an agent's skill."""
+    sk = load_skills().get(skill_name)
+    if not sk:
+        return None
+    return {**sk, "id": f"skill:{skill_name}", "reason": "Jira 모델 에이전트"}
 
 
 if __name__ == "__main__":

@@ -68,7 +68,7 @@ def skill_ref(key, skill):
 
 def adapt_prompt(key, prompt, skill=None):
     """Rewrite a leading '/skill' token (catalog notation) into the runner's own syntax."""
-    if not skill:
+    if not skill or key not in ADAPTERS:  # mock / unknown: keep catalog notation
         return prompt
     return re.sub(rf"^/{re.escape(skill)}\b", lambda m: skill_ref(key, skill), prompt)
 

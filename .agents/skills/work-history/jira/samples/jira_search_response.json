@@ -1,0 +1,250 @@
+{
+  "issues": [
+    {
+      "id": "10101",
+      "key": "MDL-101",
+      "self": "https://example.atlassian.net/rest/api/3/issue/10101",
+      "fields": {
+        "summary": "65인치 OLED TV X1",
+        "issuetype": {
+          "name": "Model"
+        },
+        "status": {
+          "name": "In Progress"
+        },
+        "duedate": "2026-11-20",
+        "created": "2026-10-20T09:00:00.000+0900",
+        "updated": "2026-10-20T09:00:00.000+0900",
+        "assignee": {
+          "accountId": "557058:aaaa-0001",
+          "displayName": "Tommy"
+        },
+        "customfield_10050": "TV-OLED65-X1",
+        "customfield_10051": {
+          "value": "TV"
+        },
+        "customfield_10052": "https://wiki.example.com/spec/TV-OLED65-X1",
+        "customfield_10053": [
+          {
+            "value": "KR"
+          },
+          {
+            "value": "US"
+          },
+          {
+            "value": "EU"
+          }
+        ],
+        "customfield_10054": "2027-01-15",
+        "customfield_10060": {
+          "accountId": "557058:aaaa-0002",
+          "displayName": "Alice Kim",
+          "emailAddress": "alice@example.com"
+        },
+        "customfield_10061": {
+          "accountId": "557058:aaaa-0003",
+          "displayName": "Bob Lee",
+          "emailAddress": "bob@example.com"
+        },
+        "customfield_10062": {
+          "accountId": "557058:aaaa-0004",
+          "displayName": "Jiwoo Park",
+          "emailAddress": "jiwoo@example.com"
+        }
+      }
+    },
+    {
+      "id": "10102",
+      "key": "MDL-102",
+      "self": "https://example.atlassian.net/rest/api/3/issue/10102",
+      "fields": {
+        "summary": "27인치 QHD 모니터 Pro",
+        "issuetype": {
+          "name": "Model"
+        },
+        "status": {
+          "name": "In Progress"
+        },
+        "duedate": "2026-11-12",
+        "created": "2026-10-24T10:30:00.000+0900",
+        "updated": "2026-10-24T10:30:00.000+0900",
+        "assignee": {
+          "accountId": "557058:aaaa-0001",
+          "displayName": "Tommy"
+        },
+        "customfield_10050": "MON-27Q-PRO",
+        "customfield_10051": {
+          "value": "모니터"
+        },
+        "customfield_10052": "https://wiki.example.com/spec/MON-27Q-PRO",
+        "customfield_10053": [
+          {
+            "value": "KR"
+          },
+          {
+            "value": "US"
+          }
+        ],
+        "customfield_10054": "2026-12-10",
+        "customfield_10060": {
+          "accountId": "557058:aaaa-0002",
+          "displayName": "Alice Kim",
+          "emailAddress": "alice@example.com"
+        },
+        "customfield_10061": {
+          "accountId": "557058:aaaa-0003",
+          "displayName": "Bob Lee",
+          "emailAddress": "bob@example.com"
+        },
+        "customfield_10062": {
+          "accountId": "557058:aaaa-0004",
+          "displayName": "Jiwoo Park",
+          "emailAddress": "jiwoo@example.com"
+        }
+      }
+    },
+    {
+      "id": "10103",
+      "key": "MDL-103",
+      "self": "https://example.atlassian.net/rest/api/3/issue/10103",
+      "fields": {
+        "summary": "사운드바 500",
+        "issuetype": {
+          "name": "Model"
+        },
+        "status": {
+          "name": "To Do"
+        },
+        "duedate": "2026-12-05",
+        "created": "2026-10-29T14:00:00.000+0900",
+        "updated": "2026-10-29T14:00:00.000+0900",
+        "assignee": {
+          "accountId": "557058:aaaa-0001",
+          "displayName": "Tommy"
+        },
+        "customfield_10050": "SPK-BAR-500",
+        "customfield_10051": {
+          "value": "오디오"
+        },
+        "customfield_10052": "https://wiki.example.com/spec/SPK-BAR-500",
+        "customfield_10053": [
+          {
+            "value": "KR"
+          },
+          {
+            "value": "EU"
+          },
+          {
+            "value": "JP"
+          }
+        ],
+        "customfield_10054": "2027-02-01",
+        "customfield_10060": {
+          "accountId": "557058:aaaa-0003",
+          "displayName": "Bob Lee",
+          "emailAddress": "bob@example.com"
+        },
+        "customfield_10061": {
+          "accountId": "557058:aaaa-0002",
+          "displayName": "Alice Kim",
+          "emailAddress": "alice@example.com"
+        },
+        "customfield_10062": {
+          "accountId": "557058:aaaa-0004",
+          "displayName": "Jiwoo Park",
+          "emailAddress": "jiwoo@example.com"
+        }
+      }
+    },
+    {
+      "id": "10104",
+      "key": "MDL-104",
+      "self": "https://example.atlassian.net/rest/api/3/issue/10104",
+      "fields": {
+        "summary": "음성 리모컨 V2",
+        "issuetype": {
+          "name": "Model"
+        },
+        "status": {
+          "name": "To Do"
+        },
+        "duedate": "2026-11-28",
+        "created": "2026-10-30T11:00:00.000+0900",
+        "updated": "2026-10-30T11:00:00.000+0900",
+        "assignee": {
+          "accountId": "557058:aaaa-0001",
+          "displayName": "Tommy"
+        },
+        "customfield_10050": "ACC-REMOTE-V2",
+        "customfield_10051": {
+          "value": "액세서리"
+        },
+        "customfield_10052": "https://wiki.example.com/spec/ACC-REMOTE-V2",
+        "customfield_10053": [
+          {
+            "value": "KR"
+          }
+        ],
+        "customfield_10054": "2026-12-20",
+        "customfield_10060": {
+          "accountId": "557058:aaaa-0002",
+          "displayName": "Alice Kim",
+          "emailAddress": "alice@example.com"
+        },
+        "customfield_10061": null,
+        "customfield_10062": null
+      }
+    },
+    {
+      "id": "10105",
+      "key": "MDL-105",
+      "self": "https://example.atlassian.net/rest/api/3/issue/10105",
+      "fields": {
+        "summary": "55인치 QLED TV S3",
+        "issuetype": {
+          "name": "Model"
+        },
+        "status": {
+          "name": "Done"
+        },
+        "duedate": "2026-10-31",
+        "created": "2026-09-15T09:00:00.000+0900",
+        "updated": "2026-09-15T09:00:00.000+0900",
+        "assignee": {
+          "accountId": "557058:aaaa-0001",
+          "displayName": "Tommy"
+        },
+        "customfield_10050": "TV-QLED55-S3",
+        "customfield_10051": {
+          "value": "TV"
+        },
+        "customfield_10052": "https://wiki.example.com/spec/TV-QLED55-S3",
+        "customfield_10053": [
+          {
+            "value": "KR"
+          },
+          {
+            "value": "US"
+          }
+        ],
+        "customfield_10054": "2026-11-05",
+        "customfield_10060": {
+          "accountId": "557058:aaaa-0002",
+          "displayName": "Alice Kim",
+          "emailAddress": "alice@example.com"
+        },
+        "customfield_10061": {
+          "accountId": "557058:aaaa-0003",
+          "displayName": "Bob Lee",
+          "emailAddress": "bob@example.com"
+        },
+        "customfield_10062": {
+          "accountId": "557058:aaaa-0004",
+          "displayName": "Jiwoo Park",
+          "emailAddress": "jiwoo@example.com"
+        }
+      }
+    }
+  ],
+  "isLast": true
+}

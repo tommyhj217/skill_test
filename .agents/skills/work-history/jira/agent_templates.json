@@ -1,0 +1,15 @@
+{
+  "_doc": "Which agents (skills) are generated for a newly registered model, and which role owns each. Role → person comes from jira_mapping.json 'roles'. A product line listed under by_product_line replaces 'default'.",
+  "default": [
+    {"skill": "model-spec-review",  "role": "dev"},
+    {"skill": "model-test-plan",    "role": "qa"},
+    {"skill": "model-cert-check",   "role": "cert"},
+    {"skill": "model-release-note", "role": "pm"}
+  ],
+  "by_product_line": {
+    "액세서리": [
+      {"skill": "model-spec-review",  "role": "dev"},
+      {"skill": "model-release-note", "role": "pm"}
+    ]
+  }
+}
