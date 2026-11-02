@@ -90,41 +90,52 @@ def seed(db_path=None, reset=False):
     return {"users": len(USERS), "sessions": n_sess, "activities": n_act, **jira}
 
 
-# agent progress in the sample: (jira_key, skill) → status; "done" ones also get a finished run
-SAMPLE_PROGRESS = {
+# agent status per (model, skill) in the sample
+SAMPLE_STATUS = {
     ("MDL-105", "model-spec-review"): "done", ("MDL-105", "model-test-plan"): "done",
     ("MDL-105", "model-cert-check"): "done", ("MDL-105", "model-release-note"): "in_progress",
     ("MDL-101", "model-spec-review"): "done", ("MDL-101", "model-test-plan"): "in_progress",
     ("MDL-102", "model-cert-check"): "in_progress",
 }
+# finished sample runs: (model, skill, user, days ago). Anyone may use any agent of a model.
+SAMPLE_RUNS = [
+    ("MDL-105", "model-spec-review", "alice", 12), ("MDL-105", "model-test-plan", "bob", 10),
+    ("MDL-105", "model-cert-check", "jiwoo", 9), ("MDL-105", "model-release-note", "alice", 8),
+    ("MDL-101", "model-spec-review", "alice", 3), ("MDL-101", "model-spec-review", "alice", 1),
+    ("MDL-101", "model-test-plan", "bob", 2), ("MDL-101", "model-cert-check", "alice", 1),
+    ("MDL-103", "model-release-note", "alice", 5), ("MDL-102", "model-cert-check", "jiwoo", 1),
+    ("MDL-102", "model-test-plan", "bob", 4),
+]
 
 
 def seed_jira(conn, base):
-    """Import the sample Jira models (jira/samples) → models + agents, then fake some progress."""
+    """Import the sample Jira models (jira/samples) → models + agents, then add sample usage."""
     import jira_sync
     from runner import _mock_result
     report = jira_sync.ingest(conn, jira_sync.fetch_issues("sample"))
+    agents = {(a["jira_key"], a["skill_name"]): a for a in db.list_agents(conn)}
+    for k, status in SAMPLE_STATUS.items():
+        if k in agents:
+            db.set_agent_status(conn, agents[k]["id"], status)
     runs = 0
-    for (key, skill), status in SAMPLE_PROGRESS.items():
-        ag = next((a for a in db.list_agents(conn, model_key=key) if a["skill_name"] == skill), None)
+    for key, skill, user, days in SAMPLE_RUNS:
+        ag = agents.get((key, skill))
         if not ag:
-            continue
-        db.set_agent_status(conn, ag["id"], status)
-        if status != "done":
             continue
         ctx = {**ag["fields"], "role": ag["role"], "assignee": ag["assignee"]}
         result = _mock_result("", skill, ctx) or "샘플 결과"
-        uid = conn.execute("SELECT id FROM users WHERE username=?", (ag["assignee"],)).fetchone()["id"]
-        ts = (base - timedelta(days=2)).isoformat(timespec="seconds")
+        uid = conn.execute("SELECT id FROM users WHERE username=?", (user,)).fetchone()["id"]
+        ts = (base - timedelta(days=days, hours=runs)).isoformat(timespec="seconds")
         events = "\n".join(json.dumps(e, ensure_ascii=False) for e in [
             {"type": "meta", "text": "[sample] seeded run"}, {"type": "result", "text": result}]) + "\n"
-        aid = db.add_activity(conn, ag["assignee"], "skill", f"[UI·mock] /{skill} {key}", skill_name=skill,
+        aid = db.add_activity(conn, user, "skill", f"[UI·mock] /{skill} {key}", skill_name=skill,
                               ts=ts, runner="web-ui", project=ag["model_code"], tags=key)
         conn.execute("""INSERT INTO runs(user_id, result_activity_id, action_id, skill_name, prompt, mode, status,
                         started_at, ended_at, events, agent_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                      (uid, aid, f"skill:{skill}", skill, f"/{skill} {key} ({ag['model_code']})", "mock", "done",
                       ts, ts, events, ag["id"]))
         runs += 1
+    conn.execute("UPDATE agents SET status='in_progress' WHERE status='todo' AND id IN (SELECT agent_id FROM runs)")
     conn.commit()
     return {"models": len(report), "agents": sum(len(r["agents_created"]) for r in report), "sample_runs": runs}
 

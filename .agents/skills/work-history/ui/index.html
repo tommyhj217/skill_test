@@ -112,7 +112,7 @@
 </head>
 <body>
 <header>
-  <h1>🧩 모델 에이전트 · 작업 이력</h1>
+  <h1>🧩 모델 에이전트</h1>
   <div class="who">
     <span>접속 사용자: <b id="me">…</b></span>
     <select id="as" hidden title="관리자: 다른 사용자 보기"></select>
@@ -125,12 +125,11 @@
 </header>
 <div id="app">
   <aside id="left">
-    <div class="tabs"><button data-mode="agents">🧩 내 에이전트</button><button data-mode="history">🗂 작업 이력</button></div>
+    <div class="tabs"><button data-mode="agents">🧩 모델</button><button data-mode="history">🗂 작업 이력</button></div>
     <div class="tiles" id="tiles"></div>
     <div class="filters" id="agentFilters">
-      <input id="aq" placeholder="검색 (Jira 키·모델 코드·에이전트)">
-      <select id="astatus"><option value="">모든 상태</option><option value="todo">할 일</option><option value="in_progress">진행 중</option><option value="done">완료</option></select>
-      <select id="ascope" hidden><option value="me">내 것만</option><option value="all">팀 전체 (관리자)</option></select>
+      <input id="aq" placeholder="검색 (모델 코드·이름·키·제품군)" style="flex:1 1 auto">
+      <button id="newModel" title="Jira 없이 모델 등록">+ 모델</button>
     </div>
     <div class="filters" id="histFilters">
       <input id="q" placeholder="검색 (요약·태그·스킬)">
@@ -156,7 +155,7 @@ const asParam = () => { const v = $('#as').value; return v && me && v !== me.use
 
 /* ───────────── left: agents (default) / history ───────────── */
 const ST_LABEL = { todo: '할 일', in_progress: '진행 중', done: '완료' };
-let leftMode = store.get('wh.leftMode', 'agents'), skillMeta = {}, selectedAgent = null;
+let leftMode = store.get('wh.leftMode', 'agents'), skillMeta = {}, selectedModel = null;
 const skillLabel = n => skillMeta[n] ? `${skillMeta[n].icon || ''} ${skillMeta[n].label}` : n;
 function setMode(m) {
   leftMode = m; store.set('wh.leftMode', m);
@@ -168,29 +167,28 @@ document.querySelector('.tabs').onclick = e => { if (e.target.dataset.mode) setM
 function loadLeft() { return leftMode === 'agents' ? loadAgents() : loadHistory(); }
 
 async function loadAgents() {
-  const s = await apiList('/api/agents/stats?x=1' + asParam());
-  $('#tiles').innerHTML = [['내 에이전트', s.total], ['할 일', s.todo], ['진행 중', s.in_progress], ['완료', s.done]]
+  let rows = await apiList('/api/models?x=1' + asParam());
+  const mine = rows.filter(m => m.my_last);
+  $('#tiles').innerHTML = [['모델', rows.length], ['내가 실행', mine.length],
+    ['내 실행', rows.reduce((n, m) => n + m.my_runs, 0)], ['팀 실행', rows.reduce((n, m) => n + m.team_runs, 0)]]
     .map(([l, v]) => `<div class="tile"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
-  const p = new URLSearchParams();
-  if ($('#astatus').value) p.set('status', $('#astatus').value);
-  if ($('#ascope').value === 'all') p.set('all', '1');
-  let rows = await apiList('/api/agents?' + p + asParam());
   const q = $('#aq').value.trim().toLowerCase();
-  if (q) rows = rows.filter(a => [a.jira_key, a.model_code, a.model_name, a.skill_name, skillLabel(a.skill_name)].join(' ').toLowerCase().includes(q));
-  const groups = {};
-  for (const a of rows) (groups[a.jira_key] ??= []).push(a);
-  $('#list').innerHTML = rows.length ? Object.values(groups).map(g => `
-    <div class="group"><span><b>${esc(g[0].jira_key)}</b> · ${esc(g[0].model_code)} · ${esc(g[0].model_name)}</span>
-      <span>${g[0].due ? '마감 ' + esc(g[0].due.slice(5)) : ''}</span></div>
-    ${g.map(a => `<div class="item ${a.id === selectedAgent ? 'sel' : ''}" data-agent="${a.id}">
-      <div class="sum">${esc(skillLabel(a.skill_name))}</div>
-      <div class="st-${esc(a.status)}" style="font-size:12px">${esc(ST_LABEL[a.status] || a.status)}</div>
-      <div class="meta"><span class="pill">${esc(a.role || '-')}</span><span>${esc(a.assignee || '미배정')}</span>
-        <span>${esc(a.product_line || '')}</span>${a.last_run ? `<span>최근 실행 ${fmt(a.last_run.started_at)}</span>` : ''}</div>
-    </div>`).join('')}`).join('') : '<div class="empty">배정된 에이전트가 없습니다</div>';
+  if (q) rows = rows.filter(m => [m.jira_key, m.model_code, m.name, m.product_line].join(' ').toLowerCase().includes(q));
+  const item = m => `<div class="item ${m.jira_key === selectedModel ? 'sel' : ''}" data-model="${esc(m.jira_key)}">
+      <div class="sum"><b>${esc(m.model_code)}</b> ${esc(m.name || '')}</div>
+      <div style="font-size:12px" class="note">${m.due ? '마감 ' + esc(m.due.slice(5)) : ''}</div>
+      <div class="meta"><span class="pill">${esc(m.product_line || '-')}</span>
+        ${m.jira_key !== m.model_code ? `<span>${esc(m.jira_key)}</span>` : '<span>로컬</span>'}
+        ${m.my_last ? `<span class="st-done">에이전트 ${m.my_agents_used}/${m.agent_count} 사용</span>
+          <span>최근 ${esc(skillLabel(m.my_last_skill))} · ${fmt(m.my_last)}</span>`
+          : `<span>에이전트 ${m.agent_count}개</span><span>팀 실행 ${m.team_runs}회</span>`}</div></div>`;
+  const others = rows.filter(m => !m.my_last), recent = rows.filter(m => m.my_last);
+  $('#list').innerHTML = (recent.length ? `<div class="group"><b>최근 실행한 모델</b><span>${recent.length}</span></div>${recent.map(item).join('')}` : '')
+    + (others.length ? `<div class="group"><b>다른 모델</b><span>${others.length}</span></div>${others.map(item).join('')}` : '')
+    || '<div class="empty">모델이 없습니다 — + 모델 로 등록하세요</div>';
 }
 $('#aq').addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(loadAgents, 200); });
-$('#astatus').onchange = $('#ascope').onchange = () => loadAgents();
+$('#newModel').onclick = () => setView(focusId, { view: 'newModel' });
 
 async function loadHistory() {
   const s = await apiList('/api/stats?x=1' + asParam());
@@ -211,7 +209,7 @@ async function loadHistory() {
 $('#list').addEventListener('click', e => {
   const it = e.target.closest('.item'); if (!it) return;
   document.querySelectorAll('.item.sel').forEach(x => x.classList.remove('sel')); it.classList.add('sel');
-  if (it.dataset.agent) { selectedAgent = +it.dataset.agent; setView(focusId, { view: 'agent', id: selectedAgent }); return; }
+  if (it.dataset.model) { selectedModel = it.dataset.model; setView(focusId, { view: 'model', key: selectedModel }); return; }
   selectedId = +it.dataset.id;
   document.querySelectorAll('.item.sel').forEach(x => x.classList.remove('sel')); it.classList.add('sel');
   setView(focusId, { view: 'activity', id: selectedId });
@@ -323,12 +321,12 @@ function setView(id, state) {
   stopTimer(id);
   p.state = state; save();
   const body = paneEls[id]?.querySelector('.pb'); if (!body) return;
-  ({ empty: viewEmpty, activity: viewActivity, agent: viewAgent, form: viewForm, run: viewRun, runs: viewRuns }[state.view] || viewEmpty)(id, body, state);
+  ({ empty: viewEmpty, activity: viewActivity, agent: viewAgent, model: viewModel, newModel: viewNewModel, form: viewForm, run: viewRun, runs: viewRuns }[state.view] || viewEmpty)(id, body, state);
 }
 
 function viewEmpty(id, body) {
   setTitle(id, '빈 창');
-  body.innerHTML = `<div class="empty">왼쪽에서 <b>에이전트</b>를 고르면 모델 정보와 실행 폼이,<br><b>작업 이력</b>을 고르면 이어서 할 작업이 이 창에 나타납니다.<br><br>
+  body.innerHTML = `<div class="empty">왼쪽에서 <b>모델</b>을 고르면 사용할 수 있는 에이전트와 사용 여부가,<br><b>작업 이력</b>을 고르면 이어서 할 작업이 이 창에 나타납니다.<br><br>
     창 머리의 ◫ / ⊟ 로 영역을 좌우·위아래로 나눌 수 있어요.<br>(파란 테두리 창이 현재 선택된 창)</div>`;
 }
 
@@ -460,6 +458,59 @@ function viewRun(id, body, st) {
 
 const viewingSelf = () => !$('#as').value || $('#as').value === me.username;
 
+async function viewModel(id, body, st) {
+  body.innerHTML = '<div class="note">불러오는 중…</div>';
+  const d = await api(`/api/models/${encodeURIComponent(st.key)}?x=1${asParam()}`);
+  if (!d.ok) { body.innerHTML = `<div class="empty">${esc(d.error || '찾을 수 없음')}</div>`; return; }
+  const m = d.model, f = m.fields;
+  setTitle(id, `${m.model_code} · 에이전트`);
+  const used = d.agents.filter(a => a.my_runs).length;
+  const link = (u, t) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t || u)}</a>` : '-';
+  body.innerHTML = `
+    <h2>${esc(m.model_code)} <span class="note">${esc(m.name || '')}</span></h2>
+    <div class="card"><dl>
+      <dt>제품군</dt><dd>${esc(m.product_line || '-')}</dd>
+      <dt>키</dt><dd>${m.url ? link(m.url, m.jira_key) + ' (Jira)' : esc(m.jira_key) + (f.source === 'local' ? ' (로컬 등록)' : '')}</dd>
+      <dt>마감 / 출시</dt><dd>${esc(m.due || '-')} / ${esc(f.launch_date || '-')}</dd>
+      <dt>지역</dt><dd>${esc(f.regions || '-')}</dd>
+      ${f.spec_url ? `<dt>사양서</dt><dd>${link(f.spec_url)}</dd>` : ''}</dl></div>
+    <h3>사용 가능한 에이전트 <span class="note">— 내가 사용 ${used}/${d.agents.length}</span></h3>
+    <div class="actions">${d.agents.map(a => `
+      <div class="act">
+        <div class="nm">${esc(a.icon)} ${esc(a.label)}</div>
+        <div>${a.my_runs ? `<span class="st-done">✅ 사용함 · ${a.my_runs}회</span> <span class="note">최근 ${fmt(a.my_last)}${a.my_last_status !== 'done' ? ' · ' + esc(a.my_last_status) : ''}</span>`
+                         : '<span class="st-todo">⚪ 미사용</span>'}</div>
+        <div class="why">팀 ${a.team_runs}회 (${a.team_users}명) · 담당 ${esc(a.assignee || '-')} · <span class="st-${esc(a.status)}">${esc(ST_LABEL[a.status] || a.status)}</span>
+          ${a.installed ? '' : '<br><b>스킬 미설치</b>'}<br><code>/${esc(a.skill_name)}</code></div>
+        <div class="btns">${a.can_run ? `<button data-agent="${a.id}" data-where="here">▶ 실행</button>
+          <button data-agent="${a.id}" data-where="split" title="창을 나눠 옆에 열기">◫ 옆에</button>` : `<button data-agent="${a.id}" data-where="here">열기</button>`}
+          ${a.my_last_run_id ? `<button data-run="${a.my_last_run_id}" data-out="${a.id}" title="내 최근 결과를 아래 창에">결과</button>` : ''}</div>
+      </div>`).join('')}</div>
+    <p class="note">스킬로 직접 부를 때: <code>/model-agents ${esc(m.jira_key)}</code> · CLI 실행도 사용 기록에 반영됩니다.</p>`;
+  body.querySelector('.actions').onclick = e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.run) return splitPane(id, 'col', { view: 'run', runId: +b.dataset.run, agentId: +b.dataset.out });
+    const state = { view: 'agent', id: +b.dataset.agent };
+    if (b.dataset.where === 'split') splitPane(id, 'row', state); else setView(id, state);
+  };
+}
+
+function viewNewModel(id, body) {
+  setTitle(id, '+ 모델 등록');
+  const fields = [['model_code', '모델 코드 *', 'TV-OLED77-X2'], ['name', '모델 이름', '77인치 OLED TV X2'], ['product_line', '제품군', 'TV / 모니터 / 오디오 / 액세서리'],
+                  ['regions', '출시 지역', 'KR, US, EU'], ['due', '마감일', 'YYYY-MM-DD'], ['spec_url', '사양서 링크', 'https://…'], ['key', '키 (선택, 예: Jira 키)', '비우면 모델 코드']];
+  body.innerHTML = `<h2>모델 등록</h2><p class="note">Jira 없이 모델을 등록하면 제품군 규칙에 맞는 에이전트가 자동으로 붙습니다.</p>
+    <form class="form">${fields.map(([n, l, ph]) => `<label>${l}</label><input name="${n}" placeholder="${esc(ph)}" ${n === 'model_code' ? 'required' : ''}>`).join('')}
+    <div class="row-btns"><button class="primary" type="submit">등록</button><span class="note msg"></span></div></form>`;
+  body.querySelector('form').onsubmit = async e => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target));
+    const r = await api('/api/models', { method: 'POST', body: JSON.stringify(data) });
+    if (!r.ok) { body.querySelector('.msg').textContent = '⚠ ' + r.error; return; }
+    selectedModel = r.jira_key; await loadLeft(); setView(id, { view: 'model', key: r.jira_key });
+  };
+}
+
 async function viewAgent(id, body, st) {
   body.innerHTML = '<div class="note">불러오는 중…</div>';
   const d = await api(`/api/agents/${st.id}?x=1${asParam()}`);
@@ -468,7 +519,7 @@ async function viewAgent(id, body, st) {
   setTitle(id, `${a.jira_key} · ${skillLabel(a.skill_name)}`);
   const link = (u, t) => u ? `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(t || u)}</a>` : '-';
   body.innerHTML = `
-    <div class="crumb">${esc(a.product_line || '')} · ${esc(a.model_status || '')}</div>
+    <div class="crumb"><a data-model>← ${esc(a.model_code)} 에이전트 목록</a> · ${esc(a.product_line || '')}</div>
     <h2>${esc(skillLabel(a.skill_name))} — ${esc(a.jira_key)} ${esc(a.model_code)}</h2>
     <div class="row-btns" style="margin-top:0">
       <span class="seg">${['todo', 'in_progress', 'done'].map(s => `<button data-st="${s}" class="${a.status === s ? 'on' : ''}" ${d.can_run ? '' : 'disabled'}>${ST_LABEL[s]}</button>`).join('')}</span>
@@ -483,13 +534,14 @@ async function viewAgent(id, body, st) {
     <h3>이 모델의 다른 에이전트</h3>
     <div class="chips">${d.team.map(t => `<span class="chip ${t.id === a.id ? 'me' : ''}">${esc(skillLabel(t.skill_name))} · ${esc(t.assignee || '미배정')} · <span class="st-${esc(t.status)}">${esc(ST_LABEL[t.status])}</span></span>`).join('')}</div>
     <h3>실행</h3>
-    ${!x ? '<p class="note">이 에이전트의 스킬이 설치되어 있지 않습니다.</p>' : d.can_run ? '<div class="fm"></div>' : '<p class="note">담당자만 실행할 수 있어요 (보기 전용).</p>'}
-    <h3>실행 결과 (${d.runs.length})</h3>
+    ${!x ? '<p class="note">이 에이전트의 스킬이 설치되어 있지 않습니다.</p>' : d.can_run ? '<div class="fm"></div>' : '<p class="note">다른 사용자 화면을 보는 중이라 실행할 수 없어요.</p>'}
+    <h3>내 실행 결과 (${d.runs.length})</h3>
     ${d.runs.length ? `<table class="mini">${d.runs.map(r => `<tr data-run="${r.id}" title="클릭: 아래 창에서 결과 보기"><td>#${r.id}</td><td>${fmt(r.started_at)}</td>
       <td class="s-${esc(r.status)}">${esc(r.status)}</td><td>${esc(r.mode)}</td></tr>`).join('')}</table>` : '<p class="note">아직 실행한 적이 없어요.</p>'}
     ${d.comments.length ? `<h3>Jira 코멘트 (${d.comments.length})</h3><table class="mini">${d.comments.map(c => `<tr><td>${fmt(c.created_at)}</td><td>${esc(c.status)}</td><td>${esc(c.body.split('\n')[0])}</td></tr>`).join('')}</table>` : ''}
     <p class="note">Jira 모드: ${esc(d.jira_mode)}${d.jira_mode === 'sample' ? ' (샘플 데이터 · 코멘트는 로컬에만 저장)' : ''}</p>`;
   if (x && d.can_run) mountForm(id, body.querySelector('.fm'), { agentId: a.id, action: x });
+  body.querySelector('[data-model]').onclick = () => setView(id, { view: 'model', key: a.jira_key });
   body.querySelector('.seg').onclick = async e => {
     const s = e.target.dataset.st; if (!s) return;
     await api(`/api/agents/${a.id}`, { method: 'PATCH', body: JSON.stringify({ status: s }) });
@@ -564,7 +616,7 @@ $('#resetLayout').onclick = () => { forEachPane(p => { stopTimer(p.id); delete p
     $('#as').innerHTML = r.users.map(u => `<option value="${esc(u.username)}" ${u.username === me.username ? 'selected' : ''}>${esc(u.display_name)}</option>`).join('');
   }
   try { for (const sk of await apiList('/api/skills')) skillMeta[sk.name] = sk; } catch {}
-  if (me.role === 'admin') { $('#ascope').hidden = false; $('#syncBtn').hidden = false; }
+  if (me.role === 'admin') $('#syncBtn').hidden = false;
   renderLayout();
   setMode(leftMode);
   runnerMode = r.runner || ''; runnerList = r.runners || [];

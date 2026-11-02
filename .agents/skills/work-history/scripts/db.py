@@ -299,16 +299,96 @@ def set_agent_status(conn, agent_id, status):
     return True
 
 
-def agent_runs(conn, agent_id, limit=20):
-    return [dict(r) for r in conn.execute(
-        """SELECT id, prompt, mode, status, started_at, ended_at FROM runs WHERE agent_id=?
-           ORDER BY id DESC LIMIT ?""", (agent_id, limit))]
+def agent_runs(conn, agent_id, limit=20, user=None):
+    """Runs of an agent; with user → only that user's runs (results are personal)."""
+    sql = """SELECT r.id, r.prompt, r.mode, r.status, r.started_at, r.ended_at, u.username FROM runs r
+             JOIN users u ON u.id = r.user_id WHERE r.agent_id=?"""
+    args = [agent_id]
+    if user:
+        sql += " AND u.username=?"; args.append(user)
+    return [dict(r) for r in conn.execute(sql + " ORDER BY r.id DESC LIMIT ?", (*args, limit))]
 
 
 def agent_stats(conn, username=None):
     sql = "SELECT status, COUNT(*) c FROM agents" + (" WHERE assignee=?" if username else "") + " GROUP BY status"
     by = {r["status"]: r["c"] for r in conn.execute(sql, (username,) if username else ())}
     return {"total": sum(by.values()), **{k: by.get(k, 0) for k in ("todo", "in_progress", "done")}}
+
+
+# ───────────── model-centric views (skill usage) ─────────────
+
+def resolve_model(conn, ref):
+    """Model by Jira key / local key or by model code (case-insensitive)."""
+    r = conn.execute("SELECT * FROM models WHERE jira_key=? OR UPPER(model_code)=UPPER(?)", (ref, ref)).fetchone()
+    if not r:
+        return None
+    d = dict(r)
+    d["fields"] = json.loads(d.get("fields") or "{}")
+    return d
+
+
+def models_for_user(conn, username):
+    """All models; the ones this user has run an agent on come first (most recent first)."""
+    uid = (conn.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone() or {"id": -1})["id"]
+    rows = conn.execute("""
+        SELECT m.id, m.jira_key, m.model_code, m.name, m.product_line, m.status, m.due, m.url, m.fields,
+               COUNT(DISTINCT g.id) AS agent_count,
+               COUNT(DISTINCT CASE WHEN r.user_id = :uid THEN r.id END) AS my_runs,
+               COUNT(DISTINCT r.id) AS team_runs,
+               MAX(CASE WHEN r.user_id = :uid THEN r.started_at END) AS my_last,
+               COUNT(DISTINCT CASE WHEN r.user_id = :uid THEN g.id END) AS my_agents_used
+        FROM models m
+        LEFT JOIN agents g ON g.model_id = m.id
+        LEFT JOIN runs r ON r.agent_id = g.id
+        GROUP BY m.id
+        ORDER BY my_last IS NULL, my_last DESC, COALESCE(m.due, '9999'), m.jira_key""", {"uid": uid})
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["fields"] = json.loads(d.get("fields") or "{}")
+        last = conn.execute("""SELECT g.skill_name, r.status FROM runs r JOIN agents g ON g.id=r.agent_id
+                               WHERE g.model_id=? AND r.user_id=? ORDER BY r.id DESC LIMIT 1""",
+                            (d["id"], uid)).fetchone()
+        d["my_last_skill"], d["my_last_status"] = (last["skill_name"], last["status"]) if last else (None, None)
+        out.append(d)
+    return out
+
+
+def model_agents(conn, model_id, username):
+    """Agents of a model with usage: mine (count/last/status/run id) and the team's."""
+    uid = (conn.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone() or {"id": -1})["id"]
+    rows = [dict(r) for r in conn.execute("""
+        SELECT g.id, g.skill_name, g.role, g.assignee, g.status,
+               COUNT(DISTINCT CASE WHEN r.user_id = :uid THEN r.id END) AS my_runs,
+               MAX(CASE WHEN r.user_id = :uid THEN r.started_at END) AS my_last,
+               COUNT(DISTINCT r.id) AS team_runs,
+               COUNT(DISTINCT r.user_id) AS team_users
+        FROM agents g LEFT JOIN runs r ON r.agent_id = g.id
+        WHERE g.model_id = :mid GROUP BY g.id ORDER BY g.id""", {"uid": uid, "mid": model_id})]
+    for d in rows:
+        last = conn.execute("SELECT id, status FROM runs WHERE agent_id=? AND user_id=? ORDER BY id DESC LIMIT 1",
+                            (d["id"], uid)).fetchone()
+        d["my_last_run_id"], d["my_last_status"] = (last["id"], last["status"]) if last else (None, None)
+    return rows
+
+
+def record_use(conn, username, agent, summary=None, status="done", runner_name="cli"):
+    """Record that an agent skill was used outside the UI (e.g. invoked directly in a runner)."""
+    user = get_or_create_user(conn, username)
+    text = summary or f"/{agent['skill_name']} {agent['jira_key']} (CLI)"
+    aid = add_activity(conn, username, "skill", text[:300], skill_name=agent["skill_name"],
+                       runner=runner_name, project=agent.get("model_code"), tags=agent["jira_key"],
+                       status="success" if status == "done" else "failed")
+    events = json.dumps({"type": "result", "text": summary or "(CLI에서 실행됨 — 결과는 러너 대화에 있음)"},
+                        ensure_ascii=False) + "\n"
+    cur = conn.execute("""INSERT INTO runs(user_id, result_activity_id, action_id, skill_name, prompt, mode, status,
+                          started_at, ended_at, events, agent_id) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                       (user["id"], aid, f"skill:{agent['skill_name']}", agent["skill_name"], text, runner_name,
+                        status, now_iso(), now_iso(), events, agent["id"]))
+    if agent.get("status") == "todo":
+        set_agent_status(conn, agent["id"], "in_progress")
+    conn.commit()
+    return cur.lastrowid
 
 
 def owned(conn, activity_id, username):

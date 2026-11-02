@@ -151,7 +151,7 @@ class ServerAPI(unittest.TestCase):
         seed(DB, reset=True)
         cls.procs, cls.base = [], {}
         env = {**os.environ, "JIRA_WEBHOOK_SECRET": "s3cret"}
-        for user in ("alice", "bob", "tommyhj"):
+        for user in ("alice", "bob", "jiwoo", "tommyhj"):
             port = free_port()
             cls.procs.append(subprocess.Popen(
                 [sys.executable, str(SCRIPTS / "server.py"), "--port", str(port), "--user", user,
@@ -222,13 +222,69 @@ class ServerAPI(unittest.TestCase):
         _, d = self.call("alice", f"/api/agents/{ag['id']}")
         self.assertIn(ag["model_code"], d["comments"][0]["body"])
 
-    def test_other_assignee_cannot_touch(self):
-        ag = self.first_todo("alice")
-        self.assertEqual(self.call("bob", f"/api/agents/{ag['id']}")[0], 404)
-        self.assertEqual(self.call("bob", "/api/runs", {"agent_id": ag["id"]})[0], 404)
-        self.assertEqual(self.call("bob", f"/api/agents/{ag['id']}", {"status": "done"}, "PATCH")[0], 404)
-        code, d = self.call("tommyhj", f"/api/agents/{ag['id']}")   # admin: view only
-        self.assertEqual((code, d["can_run"]), (200, False))
+    def wait(self, user, rid):
+        for _ in range(60):
+            _, r = self.call(user, f"/api/runs/{rid}")
+            if r["status"] != "running":
+                return r
+            time.sleep(0.1)
+        self.fail("run did not finish")
+
+    def test_models_i_ran_come_first(self):
+        _, rows = self.call("alice", "/api/models")
+        ran = [r["jira_key"] for r in rows if r["my_last"]]
+        self.assertEqual(ran, [r["jira_key"] for r in rows][:len(ran)])        # mine first
+        self.assertEqual(ran[0], "MDL-101")                                     # most recent first (seed)
+        lasts = [r["my_last"] for r in rows if r["my_last"]]
+        self.assertEqual(lasts, sorted(lasts, reverse=True))
+        _, bob = self.call("bob", "/api/models")
+        self.assertNotEqual([r["jira_key"] for r in bob if r["my_last"]], ran)  # per user
+
+    def test_model_detail_usage(self):
+        _, d = self.call("alice", "/api/models/MDL-101")
+        u = {a["skill_name"]: a for a in d["agents"]}
+        self.assertEqual(u["model-spec-review"]["my_runs"], 2)
+        self.assertEqual(u["model-test-plan"]["my_runs"], 0)                   # bob ran it, not alice
+        self.assertEqual(u["model-test-plan"]["team_runs"], 1)
+        self.assertTrue(all(a["installed"] and a["can_run"] for a in d["agents"]))
+        _, d2 = self.call("alice", "/api/models/tv-oled65-x1")                 # by model code
+        self.assertEqual(d2["model"]["jira_key"], "MDL-101")
+
+    def test_anyone_can_use_any_agent_usage_is_personal(self):
+        _, d = self.call("bob", "/api/models/MDL-104")                         # bob never ran MDL-104
+        ag = d["agents"][0]
+        self.assertEqual(ag["my_runs"], 0)
+        code, run = self.call("bob", "/api/runs", {"agent_id": ag["id"]})
+        self.assertEqual(code, 201)
+        self.wait("bob", run["id"])
+        _, rows = self.call("bob", "/api/models")
+        self.assertEqual(rows[0]["jira_key"], "MDL-104")                       # now bob's most recent model
+        _, mine = self.call("bob", "/api/models/MDL-104")
+        self.assertEqual(mine["agents"][0]["my_runs"], 1)
+        _, alice = self.call("alice", "/api/models/MDL-104")
+        self.assertEqual((alice["agents"][0]["my_runs"], alice["agents"][0]["team_runs"]), (0, 1))
+        # bob's result cannot be posted by alice
+        self.assertEqual(self.call("alice", f"/api/agents/{ag['id']}/comment", {"run_id": run["id"]})[0], 404)
+        # admin looking at alice's screen: view only
+        _, adm = self.call("tommyhj", "/api/models/MDL-104?as=alice")
+        self.assertFalse(any(a["can_run"] for a in adm["agents"]))
+
+    def test_register_local_model(self):
+        code, r = self.call("jiwoo", "/api/models", {"model_code": "ACC-CABLE-01", "name": "케이블", "product_line": "액세서리"})
+        self.assertEqual((code, r["jira_key"], len(r["agents_created"])), (201, "ACC-CABLE-01", 2))
+        self.assertEqual(self.call("jiwoo", "/api/models", {"name": "no code"})[0], 400)
+
+    def test_cli_use_is_recorded(self):
+        env = {**os.environ, "WORK_HISTORY_DB": DB, "WORK_HISTORY_USER": "jiwoo"}
+        out = subprocess.run([sys.executable, str(SCRIPTS / "models.py"), "use", "MDL-103", "model-cert-check",
+                              "--summary", "CLI 인증 점검"], env=env, capture_output=True, text=True)
+        self.assertIn("recorded run", out.stdout, out.stderr)
+        _, rows = self.call("tommyhj", "/api/models?as=jiwoo")
+        self.assertEqual(rows[0]["jira_key"], "MDL-103")
+        self.assertEqual(rows[0]["my_last_skill"], "model-cert-check")
+        out = subprocess.run([sys.executable, str(SCRIPTS / "models.py"), "show", "MDL-103"], env=env,
+                             capture_output=True, text=True)
+        self.assertIn("✅ 사용함", out.stdout)
 
     def test_status_change(self):
         ag = self.first_todo("bob")

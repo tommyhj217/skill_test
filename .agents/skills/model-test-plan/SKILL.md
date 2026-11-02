@@ -23,6 +23,13 @@ If a Jira MCP/connector is available you may read the issue directly instead.
 3. List test cases by area with priority, and environments per region (power voltage, broadcast standard, language).
 4. Output a table (영역 | 케이스 | 우선순위 | 지역 | 담당) and a schedule ending before `due`.
 
+## Record usage (always, at the end)
+So the model menu (`model-agents` skill / UI) shows this agent as used:
+```bash
+python3 .agents/skills/work-history/scripts/models.py use <JIRA_KEY or MODEL_CODE> model-test-plan --summary "<one-line result>"
+```
+Use `--status failed` if you could not finish. (Runs started from the work-history UI are recorded automatically.)
+
 ## Output
 Markdown. Keep it short enough to paste as a Jira comment. The work-history UI can post it to the issue.
 Example: `examples/sample_output.md`.

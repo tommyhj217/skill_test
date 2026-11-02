@@ -117,13 +117,9 @@ def link(target, dest, copy=False):
 
 
 def bundle():
-    """work-history + the Jira model agent skills next to it (ui.json with "agent": true)."""
-    out = [SKILL_SRC]
-    for d in sorted(SKILL_SRC.parent.iterdir()):
-        ui = d / "ui.json"
-        if d != SKILL_SRC and ui.exists() and json.loads(ui.read_text(encoding="utf-8")).get("agent"):
-            out.append(d)
-    return out
+    """work-history + the model agent skills next to it (model-agents entry + model-* agents)."""
+    return [SKILL_SRC] + [d for d in sorted(SKILL_SRC.parent.iterdir())
+                          if d != SKILL_SRC and d.name.startswith("model-") and (d / "SKILL.md").exists()]
 
 
 def install_project(root, runners, copy=False, github_link=False):

@@ -23,6 +23,13 @@ If a Jira MCP/connector is available you may read the issue directly instead.
 3. Compare against previous models of the same `product_line` if available in the repo.
 4. Output: summary, a table of findings (영역 | 항목 | 문제 | 심각도 | 제안), open questions for the PM.
 
+## Record usage (always, at the end)
+So the model menu (`model-agents` skill / UI) shows this agent as used:
+```bash
+python3 .agents/skills/work-history/scripts/models.py use <JIRA_KEY or MODEL_CODE> model-spec-review --summary "<one-line result>"
+```
+Use `--status failed` if you could not finish. (Runs started from the work-history UI are recorded automatically.)
+
 ## Output
 Markdown. Keep it short enough to paste as a Jira comment. The work-history UI can post it to the issue.
 Example: `examples/sample_output.md`.

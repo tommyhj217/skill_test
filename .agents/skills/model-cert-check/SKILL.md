@@ -23,6 +23,13 @@ If a Jira MCP/connector is available you may read the issue directly instead.
 3. Flag items whose lead time does not fit before `launch_date`.
 4. Output a table (지역 | 인증 | 필요 서류 | 소요 | 위험).
 
+## Record usage (always, at the end)
+So the model menu (`model-agents` skill / UI) shows this agent as used:
+```bash
+python3 .agents/skills/work-history/scripts/models.py use <JIRA_KEY or MODEL_CODE> model-cert-check --summary "<one-line result>"
+```
+Use `--status failed` if you could not finish. (Runs started from the work-history UI are recorded automatically.)
+
 ## Output
 Markdown. Keep it short enough to paste as a Jira comment. The work-history UI can post it to the issue.
 Example: `examples/sample_output.md`.

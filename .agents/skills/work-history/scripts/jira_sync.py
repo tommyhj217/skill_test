@@ -77,6 +77,7 @@ def normalize_issue(issue, m=None):
         "due": f.get("duedate"),
         "url": f"{base}/browse/{issue['key']}" if base else None,
         "created": f.get("created"),
+        "source": "jira",
     }
     for name, fid in m["fields"].items():
         norm[name] = _value(f.get(fid))
@@ -127,6 +128,26 @@ def generate_agents(conn, model_id, norm):
         else:
             conn.execute("UPDATE agents SET assignee=? WHERE model_id=? AND skill_name=? AND assignee IS NOT ?",
                          (assignee, model_id, spec["skill"], assignee))
+    return created
+
+
+def register_model(conn, model_code, name=None, product_line=None, regions=None, due=None,
+                   key=None, spec_url=None, launch_date=None, roles=None):
+    """Register a model without Jira (skill-first workflow). key defaults to the model code."""
+    norm = {"jira_key": key or model_code, "model_code": model_code, "model_name": name or model_code,
+            "product_line": product_line, "regions": regions, "due": due, "spec_url": spec_url,
+            "launch_date": launch_date, "status": "Local", "url": None, "source": "local",
+            "roles": roles or {}}
+    model_id, new = upsert_model(conn, norm)
+    created = generate_agents(conn, model_id, norm)
+    conn.commit()
+    return {"jira_key": norm["jira_key"], "new_model": new, "agents_created": created}
+
+
+def ensure_agents(conn, model):
+    """Add agents for templates/skills introduced after the model was created."""
+    created = generate_agents(conn, model["id"], {**model["fields"], "product_line": model.get("product_line")})
+    conn.commit()  # always: an open write transaction would lock the DB for other processes
     return created
 
 
