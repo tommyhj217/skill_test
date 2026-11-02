@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/skills/work-history/scripts/hook_logger.py\"" } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "Bash|Edit|Write|Skill", "hooks": [ { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/skills/work-history/scripts/hook_logger.py\"" } ] }
+    ]
+  }
+}

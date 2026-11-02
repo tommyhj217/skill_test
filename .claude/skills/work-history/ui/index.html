@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Work History</title>
+<style>
+  :root { --bg:#f7f7f8; --card:#fff; --fg:#1d1d1f; --muted:#6b6b73; --line:#e4e4e8;
+          --accent:#3b5bdb; --ok:#2f9e44; --bad:#e03131; --wip:#f08c00; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#141416; --card:#1e1e22; --fg:#ececf0; --muted:#9a9aa3; --line:#2e2e34; --accent:#748ffc; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:14px/1.5 system-ui,-apple-system,"Segoe UI","Noto Sans KR",sans-serif; background:var(--bg); color:var(--fg); }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; padding:16px 24px; border-bottom:1px solid var(--line); background:var(--card); }
+  header h1 { font-size:18px; margin:0; }
+  .who { color:var(--muted); }
+  main { max-width:1100px; margin:0 auto; padding:20px 16px; }
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:16px; }
+  .tile { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .tile .v { font-size:24px; font-weight:600; font-variant-numeric:tabular-nums; }
+  .tile .l { color:var(--muted); font-size:12px; }
+  .bar { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+  input, select, button, textarea { font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:6px 10px; }
+  button { cursor:pointer; } button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  #q { flex:1; min-width:180px; }
+  table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  th, td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-size:12px; color:var(--muted); font-weight:500; }
+  td.ts { white-space:nowrap; color:var(--muted); font-variant-numeric:tabular-nums; }
+  .pill { display:inline-block; padding:1px 8px; border-radius:99px; font-size:12px; border:1px solid var(--line); }
+  .s-success { color:var(--ok); } .s-failed { color:var(--bad); } .s-in_progress { color:var(--wip); }
+  .tag { color:var(--accent); font-size:12px; }
+  .acts button { padding:2px 8px; font-size:12px; }
+  .pinned td:first-child { box-shadow: inset 3px 0 var(--accent); }
+  .wrap { overflow-x:auto; }
+  dialog { border:1px solid var(--line); border-radius:12px; background:var(--card); color:var(--fg); width:min(480px, 92vw); }
+  dialog label { display:block; margin:8px 0 4px; color:var(--muted); font-size:12px; }
+  dialog input, dialog textarea, dialog select { width:100%; }
+  .empty { padding:24px; text-align:center; color:var(--muted); }
+  .skills { color:var(--muted); font-size:12px; margin-bottom:12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🗂 AI 작업 이력</h1>
+  <div class="who">접속 사용자: <b id="me">…</b>
+    <select id="as" hidden title="관리자: 다른 사용자 보기"></select>
+  </div>
+</header>
+<main>
+  <section class="tiles" id="tiles"></section>
+  <div class="skills" id="skills"></div>
+  <div class="bar">
+    <input id="q" placeholder="검색 (요약·태그·스킬)">
+    <select id="kind"><option value="">모든 유형</option><option>prompt</option><option>tool</option><option>skill</option><option>note</option></select>
+    <select id="status"><option value="">모든 상태</option><option>success</option><option>failed</option><option>in_progress</option></select>
+    <select id="session"><option value="">모든 세션</option></select>
+    <button class="primary" id="add">+ 메모 추가</button>
+  </div>
+  <div class="wrap"><table>
+    <thead><tr><th>시각</th><th>유형</th><th>내용</th><th>세션 / 러너</th><th>상태</th><th></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table></div>
+</main>
+
+<dialog id="dlg"><form method="dialog" id="form">
+  <h3 id="dlgTitle" style="margin-top:0">메모 추가</h3>
+  <label>요약</label><input name="summary" required>
+  <label>상세</label><textarea name="detail" rows="3"></textarea>
+  <label>태그 (쉼표 구분)</label><input name="tags">
+  <label>상태</label><select name="status"><option>success</option><option>failed</option><option>in_progress</option></select>
+  <p style="text-align:right"><button value="cancel" formnovalidate>취소</button> <button class="primary" value="ok">저장</button></p>
+</form></dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let me = null, editing = null, cache = [];
+const asParam = () => { const v = $('#as').value; return v && v !== me.username ? `&as=${encodeURIComponent(v)}` : ''; };
+const viewingSelf = () => !$('#as').value || $('#as').value === me.username;
+const api = (p, o) => fetch(p, o).then(r => r.json());
+
+async function init() {
+  const r = await api('/api/me');
+  me = r.me;
+  $('#me').textContent = `${me.display_name} (${me.username}${me.role === 'admin' ? ' · admin' : ''})`;
+  if (r.users.length) {
+    $('#as').hidden = false;
+    $('#as').innerHTML = r.users.map(u => `<option value="${esc(u.username)}" ${u.username === me.username ? 'selected' : ''}>${esc(u.display_name)}</option>`).join('');
+  }
+  await refreshAll();
+}
+
+async function refreshAll() { await Promise.all([loadStats(), loadSessions()]); await loadRows(); }
+
+async function loadStats() {
+  const s = await api('/api/stats?x=1' + asParam());
+  const tiles = [['전체 활동', s.total], ['세션', s.sessions], ['프롬프트', s.by_kind.prompt || 0],
+                 ['스킬 실행', s.by_kind.skill || 0], ['실패', s.by_status.failed || 0]];
+  $('#tiles').innerHTML = tiles.map(([l, v]) => `<div class="tile"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('');
+  $('#skills').textContent = s.top_skills.length ? '자주 쓴 스킬: ' + s.top_skills.map(t => `${t.skill_name} ${t.c}회`).join(' · ') : '';
+}
+
+async function loadSessions() {
+  const ss = await api('/api/sessions?x=1' + asParam());
+  $('#session').innerHTML = '<option value="">모든 세션</option>' + ss.map(s =>
+    `<option value="${esc(s.id)}">${esc(s.started_at.slice(0,16).replace('T',' '))} · ${esc(s.runner)} · ${esc(s.project || '')} (${s.activity_count})</option>`).join('');
+}
+
+async function loadRows() {
+  const p = new URLSearchParams({ limit: 200 });
+  for (const k of ['q', 'kind', 'status', 'session']) if ($('#' + k).value) p.set(k, $('#' + k).value);
+  cache = await api('/api/activities?' + p + asParam());
+  const own = viewingSelf();
+  $('#rows').innerHTML = cache.length ? cache.map(a => `
+    <tr class="${a.pinned ? 'pinned' : ''}">
+      <td class="ts">${esc(a.ts.slice(0,16).replace('T',' '))}</td>
+      <td><span class="pill">${esc(a.kind)}</span></td>
+      <td>${esc(a.summary)}${a.skill_name ? ` <span class="tag">/${esc(a.skill_name)}</span>` : ''}${a.tool_name ? ` <span class="tag">${esc(a.tool_name)}</span>` : ''}
+          ${a.tags ? `<div class="tag">#${esc(a.tags).replaceAll(',', ' #')}</div>` : ''}</td>
+      <td class="ts">${esc(a.runner || '-')}<br>${esc(a.project || '')}</td>
+      <td class="s-${esc(a.status)}">${esc(a.status)}</td>
+      <td class="acts">${own ? `<button data-pin="${a.id}">${a.pinned ? '📌' : '📍'}</button>
+          <button data-edit="${a.id}">수정</button> <button data-del="${a.id}">삭제</button>` : ''}</td>
+    </tr>`).join('') : '<tr><td colspan="6" class="empty">이력이 없습니다</td></tr>';
+}
+
+$('#rows').addEventListener('click', async e => {
+  const t = e.target, id = t.dataset.pin || t.dataset.edit || t.dataset.del;
+  if (!id) return;
+  const a = cache.find(x => x.id == id);
+  if (t.dataset.pin) await api(`/api/activities/${id}`, { method: 'PATCH', body: JSON.stringify({ pinned: a.pinned ? 0 : 1 }) });
+  if (t.dataset.del && confirm('이 이력을 삭제할까요?')) await api(`/api/activities/${id}`, { method: 'DELETE' });
+  if (t.dataset.edit) return openDlg(a);
+  refreshAll();
+});
+
+function openDlg(a) {
+  editing = a || null;
+  $('#dlgTitle').textContent = a ? `이력 #${a.id} 수정` : '메모 추가';
+  const f = $('#form');
+  for (const k of ['summary', 'detail', 'tags']) f[k].value = a?.[k] || '';
+  f.status.value = a?.status || 'success';
+  $('#dlg').showModal();
+}
+$('#add').onclick = () => openDlg(null);
+$('#dlg').addEventListener('close', async () => {
+  if ($('#dlg').returnValue !== 'ok') return;
+  const f = $('#form'), body = JSON.stringify(Object.fromEntries(['summary','detail','tags','status'].map(k => [k, f[k].value])));
+  if (editing) await api(`/api/activities/${editing.id}`, { method: 'PATCH', body });
+  else await api('/api/activities', { method: 'POST', body: JSON.stringify({ ...JSON.parse(body), kind: 'note' }) });
+  refreshAll();
+});
+
+let deb; $('#q').addEventListener('input', () => { clearTimeout(deb); deb = setTimeout(loadRows, 250); });
+for (const k of ['kind', 'status', 'session']) $('#' + k).onchange = loadRows;
+$('#as').onchange = refreshAll;
+init();
+</script>
+</body>
+</html>
