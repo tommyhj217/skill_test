@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "type": "command",
+        "cwd": ".",
+        "timeoutSec": 10,
+        "bash": "python3 .agents/skills/work-history/scripts/hook_logger.py --runner copilot --event sessionStart",
+        "powershell": "python .agents\\skills\\work-history\\scripts\\hook_logger.py --runner copilot --event sessionStart"
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "cwd": ".",
+        "timeoutSec": 10,
+        "bash": "python3 .agents/skills/work-history/scripts/hook_logger.py --runner copilot --event userPromptSubmitted",
+        "powershell": "python .agents\\skills\\work-history\\scripts\\hook_logger.py --runner copilot --event userPromptSubmitted"
+      }
+    ],
+    "postToolUse": [
+      {
+        "type": "command",
+        "cwd": ".",
+        "timeoutSec": 10,
+        "bash": "python3 .agents/skills/work-history/scripts/hook_logger.py --runner copilot --event postToolUse",
+        "powershell": "python .agents\\skills\\work-history\\scripts\\hook_logger.py --runner copilot --event postToolUse"
+      }
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+import sys, json, uuid
+a = sys.argv[1:]
+sid = a[a.index("--resume")+1] if "--resume" in a else str(uuid.uuid4())
+prompt = a[a.index("-p")+1]
+evs = [{"type":"init","session_id":sid,"model":"gemini-x"},
+  {"type":"message","role":"user","content":prompt},
+  {"type":"tool_use","tool_name":"read_file","tool_id":"t1","parameters":{"absolute_path":"/repo/README.md"}},
+  {"type":"tool_result","tool_id":"t1","status":"success"},
+  {"type":"message","role":"assistant","content":"[gemini] ","delta":True},
+  {"type":"message","role":"assistant","content":f"done: {prompt}","delta":True},
+  {"type":"result","status":"success","stats":{"duration_ms":1234}}]
+for ev in evs: print(json.dumps(ev), flush=True)

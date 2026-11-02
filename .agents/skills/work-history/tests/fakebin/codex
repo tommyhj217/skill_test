@@ -1,0 +1,13 @@
+#!/usr/bin/env python3
+# fake `codex exec --json` emitting the documented JSONL events
+import sys, json, uuid
+a = sys.argv[1:]
+sid = a[a.index("resume")+1] if "resume" in a else str(uuid.uuid4())
+prompt = a[-1]
+for ev in [{"type":"thread.started","thread_id":sid},{"type":"turn.started"},
+  {"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"bash -lc ls","status":"in_progress"}},
+  {"type":"item.completed","item":{"id":"item_1","type":"command_execution","command":"bash -lc ls","status":"completed"}},
+  {"type":"item.completed","item":{"id":"item_2","type":"file_change","changes":[{"path":"src/app.py","kind":"update"}]}},
+  {"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":f"[codex] {'resumed ' if 'resume' in a else ''}done: {prompt}"}},
+  {"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":0,"output_tokens":5,"reasoning_output_tokens":0}}]:
+    print(json.dumps(ev), flush=True)

@@ -1,10 +1,25 @@
 {
   "hooks": {
     "UserPromptSubmit": [
-      { "hooks": [ { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/skills/work-history/scripts/hook_logger.py\"" } ] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.agents/skills/work-history/scripts/hook_logger.py\" --runner claude"
+          }
+        ]
+      }
     ],
     "PostToolUse": [
-      { "matcher": "Bash|Edit|Write|Skill", "hooks": [ { "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/skills/work-history/scripts/hook_logger.py\"" } ] }
+      {
+        "matcher": "Bash|Edit|Write|Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.agents/skills/work-history/scripts/hook_logger.py\" --runner claude"
+          }
+        ]
+      }
     ]
   }
 }

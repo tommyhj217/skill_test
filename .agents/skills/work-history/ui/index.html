@@ -125,7 +125,7 @@ const api = (p, o) => fetch(p, o).then(async r => ({ ok: r.ok, status: r.status,
 const apiList = p => fetch(p).then(r => r.json());
 const store = { get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
                 set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
-let me = null, runnerMode = '', selectedId = null;
+let me = null, runnerMode = '', runnerList = [], selectedId = null;
 const asParam = () => { const v = $('#as').value; return v && me && v !== me.username ? `&as=${encodeURIComponent(v)}` : ''; };
 
 /* ───────────── left: history list ───────────── */
@@ -283,7 +283,8 @@ async function viewActivity(id, body, st) {
     ${d.can_run ? '' : '<p class="note">다른 사용자의 이력은 보기만 할 수 있어요.</p>'}
     <div class="actions">${d.actions.map((x, i) => `
       <div class="act"><div class="nm">${esc(x.icon || '✨')} ${esc(x.label)}</div>
-        <div class="why">${esc(x.reason || '')}${x.inputs?.length ? ` · 입력 ${x.inputs.length}개` : ''} · 결과: ${esc(x.output)}</div>
+        <div class="why">${esc(x.reason || '')}${x.inputs?.length ? ` · 입력 ${x.inputs.length}개` : ''} · 결과: ${esc(x.output)}
+          <br>러너: ${esc((x.runners || ['모든 러너']).join(', '))}</div>
         ${d.can_run ? `<div class="btns"><button data-i="${i}" data-where="here">선택</button>
           <button data-i="${i}" data-where="split" title="창을 나눠서 옆에 열기">◫ 옆에 열기</button></div>` : ''}
       </div>`).join('')}</div>`;
@@ -308,22 +309,30 @@ function viewForm(id, body, st) {
     <h2>${esc(x.icon || '')} ${esc(x.label)}</h2>
     <p class="note">${esc(x.description || x.reason || '')}</p>
     <form class="form">${(x.inputs || []).map(i => `<label>${esc(i.label || i.name)}</label>${inputHtml(i)}`).join('') || '<p class="note">입력 없이 바로 실행됩니다.</p>'}
+      <label>실행할 러너</label>
+      <select name="__runner" ${x.resume ? 'disabled' : ''}>
+        <option value="">자동 (이력의 러너 → 기본 러너)</option>
+        ${runnerList.filter(r => !x.runners || x.runners.includes(r.id) || r.id === 'mock').map(r =>
+          `<option value="${esc(r.id)}" ${r.installed ? '' : 'disabled'} ${x.runner === r.id ? 'selected' : ''}>${esc(r.label)}${r.installed ? '' : ' (미설치)'}</option>`).join('')}
+      </select>
       <div class="preview" title="실제로 실행될 프롬프트">…</div>
       <div class="row-btns"><button class="primary" type="submit">▶ 실행</button>
         <label style="margin:0"><input type="checkbox" name="__split" style="width:auto"> 결과를 아래 창에서 보기</label>
-        ${x.resume ? '<span class="badge">↪ 세션 재개</span>' : ''}<span class="badge">runner: ${esc(runnerMode)}</span></div>
+        ${x.resume ? '<span class="badge">↪ 세션 재개</span>' : ''}<span class="badge rb">runner: …</span></div>
     </form>`;
   const form = body.querySelector('form'), pv = body.querySelector('.preview');
-  const values = () => Object.fromEntries([...new FormData(form)].filter(([k]) => k !== '__split'));
+  const values = () => Object.fromEntries([...new FormData(form)].filter(([k]) => !k.startsWith('__')));
+  const payload = () => JSON.stringify({ activity_id: st.activityId, action_id: x.id, values: values(), runner: form.__runner.value || null });
   const preview = async () => {
-    const r = await api('/api/runs/preview', { method: 'POST', body: JSON.stringify({ activity_id: st.activityId, action_id: x.id, values: values() }) });
-    pv.textContent = r.ok ? (r.resume ? '(resume) ' : '') + r.prompt : '⚠ ' + (r.error || '');
+    const r = await api('/api/runs/preview', { method: 'POST', body: payload() });
+    pv.textContent = r.ok ? (r.resume ? '(resume) ' : '') + r.prompt + (r.error ? '\n⚠ ' + r.error : '') : '⚠ ' + (r.error || '');
+    body.querySelector('.rb').textContent = 'runner: ' + (r.runner || '없음');
   };
   let t; form.addEventListener('input', () => { clearTimeout(t); t = setTimeout(preview, 200); }); preview();
   body.querySelector('[data-back]').onclick = () => setView(id, { view: 'activity', id: st.activityId });
   form.onsubmit = async e => {
     e.preventDefault();
-    const r = await api('/api/runs', { method: 'POST', body: JSON.stringify({ activity_id: st.activityId, action_id: x.id, values: values() }) });
+    const r = await api('/api/runs', { method: 'POST', body: payload() });
     if (!r.ok) { pv.textContent = '⚠ ' + (r.error || '실행 실패'); return; }
     const state = { view: 'run', runId: r.id, output: x.output, activityId: st.activityId };
     if (form.__split.checked) splitPane(id, 'col', state); else setView(id, state);
@@ -342,7 +351,7 @@ function viewRun(id, body, st) {
   q('[data-back]')?.addEventListener('click', () => setView(id, { view: 'activity', id: st.activityId }));
   q('[data-runs]').onclick = () => setView(id, { view: 'runs' });
   q('.cancel').onclick = () => api(`/api/runs/${st.runId}`, { method: 'DELETE' });
-  let since = 0;
+  let since = 0, lastText = null;
   const poll = async () => {
     const r = await api(`/api/runs/${st.runId}?since=${since}${asParam()}`);
     if (!r.ok) { q('.rs').textContent = r.error; return; }
@@ -350,6 +359,8 @@ function viewRun(id, body, st) {
     q('.rp').textContent = r.prompt;
     q('.rs').innerHTML = r.status === 'running' ? '<span class="spin"></span> <span class="s-running">실행 중</span>' : `<span class="s-${esc(r.status)}">${esc(r.status)}</span> · ${esc(r.mode)}`;
     for (const ev of r.events) {
+      if (ev.type === 'result' && ev.text && ev.text === lastText) q('.evs .ev-text:last-of-type')?.remove();
+      if (ev.type === 'text') lastText = ev.text;
       if (ev.type === 'result') q('.result').innerHTML = renderOutput(ev.text, st.output) +
         (ev.cost != null ? `<p class="note">${ev.duration_ms ?? '-'}ms · $${(+ev.cost).toFixed(4)}</p>` : '');
       else if (ev.type === 'text') q('.evs').insertAdjacentHTML('beforeend', `<div class="ev-text md">${md(ev.text)}</div>`);
@@ -421,8 +432,9 @@ $('#resetLayout').onclick = () => { forEachPane(p => { stopTimer(p.id); delete p
   }
   renderLayout();
   await loadLeft();
-  runnerMode = r.runner || '';
-  $('#runnerBadge').textContent = 'runner: ' + runnerMode;
+  runnerMode = r.runner || ''; runnerList = r.runners || [];
+  $('#runnerBadge').textContent = '기본 러너: ' + runnerMode;
+  $('#runnerBadge').title = runnerList.map(x => `${x.label}: ${x.installed ? '설치됨' : '미설치'}`).join('\n');
 })();
 </script>
 </body>

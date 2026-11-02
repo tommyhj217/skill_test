@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 
 import db
 import runner
+import runners
 import skills_registry as reg
 
 UI_FILE = Path(__file__).resolve().parent.parent / "ui" / "index.html"
@@ -59,7 +60,7 @@ class Handler(BaseHTTPRequestHandler):
             users = [dict(r) for r in conn.execute(
                 "SELECT username, display_name, role FROM users ORDER BY username")] if me["role"] == "admin" else []
             return self._send(200, {"me": me, "users": users,
-                                    "runner": self.runner_mode or runner.default_mode()})
+                                    "runner": self.default_runner(), "runners": runners.available()})
         target = self._target_user(conn, qs)
         if target is None:
             return self._send(403, {"error": "forbidden: only admins can view other users"})
@@ -81,7 +82,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, {"error": "not found"})
             return self._send(200, {"activity": act, "actions": reg.suggest(act),
                                     "can_run": target == self.current_user,
-                                    "runner": self.runner_mode or runner.default_mode()})
+                                    "runner": self.default_runner(), "runners": runners.available()})
         if u.path == "/api/runs":
             return self._send(200, db.list_runs(conn, target))
         if len(parts) == 3 and parts[:2] == ["api", "runs"] and parts[2].isdigit():
@@ -92,6 +93,28 @@ class Handler(BaseHTTPRequestHandler):
             events = [json.loads(x) for x in run.pop("events").splitlines() if x]
             return self._send(200, {**run, "events": events[since:], "next": len(events)})
         self._send(404, {"error": "not found"})
+
+    def default_runner(self):
+        return self.runner_mode or runner.default_runner()
+
+    def _pick_runner(self, action, act, requested):
+        """Runner for this action.
+        continue → the session's own runner. An explicitly requested runner is used as-is or
+        rejected (never silently replaced). Otherwise: the clicked row's runner → default."""
+        allowed = action.get("runners")
+        ok = lambda k: k and (not allowed or k in allowed or k == "mock") and runners.is_installed(k)
+        if action.get("resume"):
+            return action["runner"], None
+        if requested:
+            if not runners.is_installed(requested):
+                return None, f"'{requested}' 러너가 설치되어 있지 않습니다"
+            if not ok(requested):
+                return None, f"이 작업은 {', '.join(allowed)} 러너에서만 실행됩니다"
+            return requested, None
+        for key in (runners.canonical((act or {}).get("runner")), self.default_runner()):
+            if ok(key):
+                return key, None
+        return None, f"이 작업은 {', '.join(allowed)} 러너에서만 실행됩니다" if allowed else "사용 가능한 러너가 없습니다"
 
     def _resolve_action(self, conn, b):
         """Server-side: (activity, action, rendered prompt) for a run request."""
@@ -118,14 +141,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(404, {"error": "unknown activity or action"})
             if not prompt:
                 return self._send(400, {"error": "empty prompt"})
+            key, err = self._pick_runner(action, act, b.get("runner"))
+            skill = action.get("name") if action["id"].startswith("skill:") else None
+            if key:
+                prompt = runners.adapt_prompt(key, prompt, skill)
             if u.path.endswith("preview"):
-                return self._send(200, {"prompt": prompt, "resume": bool(action.get("resume"))})
+                return self._send(200, {"prompt": prompt, "resume": bool(action.get("resume")),
+                                        "runner": key, "error": err})
+            if not key:
+                return self._send(400, {"error": err})
             resume = act["session_id"] if action.get("resume") else None
-            rid = runner.start(conn, self.db_path, self.current_user, prompt, action["id"],
-                               skill_name=action.get("name") if action["id"].startswith("skill:") else None,
-                               source_activity=act, resume_session=resume, workdir=self.workdir,
-                               mode=self.runner_mode)
-            return self._send(201, {"id": rid, "prompt": prompt})
+            rid = runner.start(conn, self.db_path, self.current_user, prompt, action["id"], key,
+                               skill_name=skill, source_activity=act, resume_session=resume,
+                               workdir=self.workdir)
+            return self._send(201, {"id": rid, "prompt": prompt, "runner": key})
         if u.path != "/api/activities":
             return self._send(404, {"error": "not found"})
         b = self._body()
@@ -172,15 +201,15 @@ def main():
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--user", default=None)
     p.add_argument("--db", default=None)
-    p.add_argument("--runner", choices=["claude", "mock"], default=None,
-                   help="claude: run real `claude -p`; mock: simulated output (default: claude if installed)")
+    p.add_argument("--runner", choices=[*runners.ADAPTERS, "mock"], default=None,
+                   help="default runner for UI actions (default: first installed of runners.json, else mock)")
     p.add_argument("--workdir", default=None, help="cwd for claude runs (default: current dir)")
     a = p.parse_args()
     Handler.workdir = a.workdir
     Handler.runner_mode = a.runner
     Handler.current_user = a.user or db.resolve_username()
     Handler.db_path = a.db
-    print(f"work-history UI: http://{a.host}:{a.port}  (user={Handler.current_user}, runner={a.runner or runner.default_mode()})", flush=True)
+    print(f"work-history UI: http://{a.host}:{a.port}  (user={Handler.current_user}, runner={a.runner or runner.default_runner()})", flush=True)
     ThreadingHTTPServer((a.host, a.port), Handler).serve_forever()
 
 

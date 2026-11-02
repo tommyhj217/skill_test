@@ -15,7 +15,7 @@ USERS = [
     ("bob", "Bob Lee", "bob@example.com", "member"),
     ("jiwoo", "Jiwoo Park", "jiwoo@example.com", "member"),
 ]
-RUNNERS = ["claude-code", "claude-code", "claude-code", "codex", "cursor"]
+RUNNERS = ["claude-code", "codex", "copilot", "gemini", "cursor"]  # every user gets each at least once
 PROJECTS = ["billing-api", "web-frontend", "data-pipeline", "infra-terraform", "skill_test"]
 SKILLS = ["code-review", "pdf", "xlsx", "work-history", "simplify", "security-review", "docx"]
 TOOLS = ["Bash", "Edit", "Write", "Read", "Grep", "WebSearch"]
@@ -48,11 +48,12 @@ def seed(db_path=None, reset=False):
         conn.execute("INSERT OR IGNORE INTO users(username, display_name, email, role, created_at)"
                      " VALUES (?,?,?,?,?)", (username, name, email, role, (base - timedelta(days=30)).isoformat()))
         uid = conn.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()["id"]
-        for s in range(rnd.randint(4, 6)):
+        for s in range(rnd.randint(5, 7)):
             start = base - timedelta(days=rnd.randint(0, 13), hours=rnd.randint(0, 9), minutes=rnd.randint(0, 59))
-            runner, project = rnd.choice(RUNNERS), rnd.choice(PROJECTS)
-            # claude-code sessions get UUID ids like real ones (enables "이어서 하기" in the UI)
-            sid = str(uuid.UUID(int=rnd.getrandbits(128), version=4)) if runner == "claude-code" \
+            runner, project = RUNNERS[s % len(RUNNERS)], rnd.choice(PROJECTS)
+            # runners with an adapter get UUID ids like real ones (enables "이어서 하기" in the UI);
+            # 'cursor' has no adapter in runners.json → shows that unsupported runners degrade gracefully
+            sid = str(uuid.UUID(int=rnd.getrandbits(128), version=4)) if runner != "cursor" \
                 else f"sess_{username}_{s:02d}"
             t = start
             rows = []

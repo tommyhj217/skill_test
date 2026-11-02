@@ -22,8 +22,26 @@ import os
 import re
 from pathlib import Path
 
+import runners
+
 SKILL_DIR = Path(__file__).resolve().parent.parent
 CATALOG = SKILL_DIR / "catalog.json"
+
+
+# Skill folders used by the different runners (Agent Skills / SKILL.md format is shared):
+#   .agents/skills  – Codex, Copilot (and the canonical home of this skill)
+#   .claude/skills  – Claude Code (also read by Copilot)
+#   .github/skills  – GitHub Copilot
+#   .gemini/skills  – Gemini CLI
+RUNNER_SKILL_DIRS = [".agents/skills", ".claude/skills", ".github/skills", ".gemini/skills"]
+USER_SKILL_DIRS = [".agents/skills", ".claude/skills", ".copilot/skills", ".codex/skills", ".gemini/skills"]
+
+
+def project_root():
+    if os.environ.get("WORK_HISTORY_PROJECT"):
+        return Path(os.environ["WORK_HISTORY_PROJECT"])
+    # <root>/<.runner>/skills/work-history
+    return SKILL_DIR.parent.parent.parent
 
 
 def _skill_roots():
@@ -31,9 +49,14 @@ def _skill_roots():
     env = os.environ.get("WORK_HISTORY_SKILL_ROOTS")
     if env:
         roots += [Path(p) for p in env.split(os.pathsep)]
-    roots.append(SKILL_DIR.parent)                       # <project>/.claude/skills
-    roots.append(Path.home() / ".claude" / "skills")     # user-level skills
-    return [r for r in roots if r.is_dir()]
+    roots += [project_root() / d for d in RUNNER_SKILL_DIRS]
+    roots += [Path.home() / d for d in USER_SKILL_DIRS]
+    seen, out = set(), []
+    for r in roots:
+        if r.is_dir() and r.resolve() not in seen:
+            seen.add(r.resolve())
+            out.append(r)
+    return out
 
 
 def _frontmatter(text):
@@ -68,6 +91,8 @@ def load_skills():
         for md in sorted(root.glob("*/SKILL.md")):
             fm = _frontmatter(md.read_text(encoding="utf-8"))
             name = fm.get("name") or md.parent.name
+            if skills.get(name, {}).get("source", "catalog") != "catalog":
+                continue  # same skill already found via another runner's folder
             ui = md.parent / "ui.json"
             desc = json.loads(ui.read_text(encoding="utf-8")) if ui.exists() else {}
             skills[name] = _normalize({**skills.get(name, {}), **desc}, name) | {
@@ -97,9 +122,11 @@ def suggest(act, limit=6):
     """Ordered list of actions for an activity: continue → rerun → related skills → free prompt."""
     skills = load_skills()
     actions = []
-    if act.get("runner") == "claude-code" and _is_real_session(act.get("session_id")):
-        actions.append({"id": "continue", "label": "이 세션 이어서 하기", "icon": "↪",
-                        "reason": "원래 Claude Code 세션을 --resume으로 이어감",
+    rkey = runners.canonical(act.get("runner"))
+    if rkey and runners.ADAPTERS[rkey].get("resume") and _is_real_session(act.get("session_id")):
+        label = runners.ADAPTERS[rkey].get("label", rkey)
+        actions.append({"id": "continue", "label": f"이 세션 이어서 하기", "icon": "↪", "runner": rkey,
+                        "runners": [rkey], "reason": f"원래 {label} 세션을 resume으로 이어감",
                         "inputs": [{"name": "args", "label": "이어서 할 지시", "type": "textarea",
                                     "default": "앞에서 하던 작업을 이어서 진행해줘."}],
                         "prompt": "{args}", "output": "markdown", "resume": True})
@@ -118,7 +145,8 @@ def suggest(act, limit=6):
 
 
 def _is_real_session(sid):
-    return bool(sid and re.fullmatch(r"[0-9a-f-]{36}|session_[A-Za-z0-9]+", sid))
+    """Seed/demo ids (sess_*, mock-*) can't be resumed; anything else came from a real runner."""
+    return bool(sid) and not sid.startswith(("sess_", "mock-"))
 
 
 def render_prompt(template, values, act):

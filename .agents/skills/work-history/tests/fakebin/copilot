@@ -1,0 +1,7 @@
+#!/usr/bin/env python3
+import sys
+a = sys.argv[1:]
+prompt = a[a.index("-p")+1]
+print("[copilot] working on:", prompt)
+print("[copilot] resumed session " + a[a.index("--resume")+1] if "--resume" in a else "[copilot] new session")
+print("Done.")
