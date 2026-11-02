@@ -1,0 +1,45 @@
+[
+  {
+    "name": "code-review", "label": "코드 리뷰", "icon": "🔍",
+    "applies_to": {"kinds": ["tool"], "tools": ["Edit", "Write"], "tags": ["bugfix", "refactor", "feature"], "skills": ["simplify"]},
+    "inputs": [
+      {"name": "level", "label": "리뷰 강도", "type": "select", "options": ["low", "medium", "high"], "default": "medium"},
+      {"name": "target", "label": "대상 (PR 번호/브랜치/경로, 비우면 현재 diff)", "type": "text", "default": ""}
+    ],
+    "prompt": "/code-review {level} {target}", "output": "markdown"
+  },
+  {
+    "name": "simplify", "label": "코드 단순화", "icon": "🧹",
+    "applies_to": {"tools": ["Edit", "Write"], "tags": ["refactor"], "skills": ["code-review"]},
+    "inputs": [], "prompt": "/simplify", "output": "markdown"
+  },
+  {
+    "name": "security-review", "label": "보안 점검", "icon": "🛡",
+    "applies_to": {"tags": ["urgent", "infra"], "skills": ["code-review"], "tools": ["Bash"]},
+    "inputs": [], "prompt": "/security-review", "output": "markdown"
+  },
+  {
+    "name": "xlsx", "label": "엑셀로 정리", "icon": "📊",
+    "applies_to": {"kinds": ["prompt"], "skills": ["pdf"]},
+    "inputs": [
+      {"name": "what", "label": "무엇을 표로 만들까요", "type": "textarea", "default": "{summary} 결과를 표로 정리"},
+      {"name": "file", "label": "파일명", "type": "text", "default": "report.xlsx"}
+    ],
+    "prompt": "{what} — {file} 파일로 저장해줘", "output": "table"
+  },
+  {
+    "name": "pdf", "label": "PDF 처리", "icon": "📄",
+    "applies_to": {"skills": ["docx"]},
+    "inputs": [
+      {"name": "file", "label": "PDF 경로", "type": "text", "default": ""},
+      {"name": "task", "label": "할 일", "type": "select", "options": ["텍스트 추출", "표 추출", "요약", "병합"], "default": "요약"}
+    ],
+    "prompt": "{file} PDF에서 {task} 해줘", "output": "markdown"
+  },
+  {
+    "name": "docx", "label": "워드 문서", "icon": "📝",
+    "applies_to": {"tags": ["docs"]},
+    "inputs": [{"name": "what", "label": "문서 내용", "type": "textarea", "default": "{summary} 내용을 보고서로 작성"}],
+    "prompt": "{what} — .docx 파일로 만들어줘", "output": "markdown"
+  }
+]

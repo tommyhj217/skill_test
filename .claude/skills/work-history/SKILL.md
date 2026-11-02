@@ -30,6 +30,14 @@ Default `data/work_history.db` (override with `WORK_HISTORY_DB`). Tables:
 - **Launch the UI**: run in background
   `python3 scripts/server.py --port 8765` and tell the user to open http://127.0.0.1:8765.
   (`--user <name>` to impersonate for testing.)
+- **Continue from history in the UI**: clicking a row shows suggested next actions
+  (resume the original Claude Code session, related skills, free prompt). Choosing one shows
+  a form generated from that skill's `ui.json`; running it calls `claude -p` (`--resume` when
+  continuing) in the background and streams the result into a pane. Panes can be split
+  left/right or top/bottom (◫ / ⊟) and resized. Use `--runner mock` for a demo without API calls,
+  `--workdir DIR` to choose where runs execute, `WORK_HISTORY_CLAUDE_ARGS` for extra CLI flags.
+- **Make another skill appear in the UI**: add `ui.json` next to its SKILL.md
+  (or an entry in `catalog.json` for skills outside this repo) – see `scripts/skills_registry.py`.
 - **Load sample data** (demo/test only): `python3 scripts/db.py seed --reset`
 
 ## Automatic recording

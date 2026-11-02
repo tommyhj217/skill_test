@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Generate deterministic sample data: 4 users, ~20 sessions, ~200 activities."""
 import random
+import uuid
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -39,7 +40,7 @@ def seed(db_path=None, reset=False):
     rnd = random.Random(42)
     conn = connect(db_path)
     if reset:
-        conn.executescript("DELETE FROM activities; DELETE FROM sessions; DELETE FROM users;"
+        conn.executescript("DELETE FROM runs; DELETE FROM activities; DELETE FROM sessions; DELETE FROM users;"
                            "DELETE FROM sqlite_sequence;")
     base = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(hours=1)
     n_act = n_sess = 0
@@ -49,8 +50,10 @@ def seed(db_path=None, reset=False):
         uid = conn.execute("SELECT id FROM users WHERE username=?", (username,)).fetchone()["id"]
         for s in range(rnd.randint(4, 6)):
             start = base - timedelta(days=rnd.randint(0, 13), hours=rnd.randint(0, 9), minutes=rnd.randint(0, 59))
-            sid = f"sess_{username}_{s:02d}"
             runner, project = rnd.choice(RUNNERS), rnd.choice(PROJECTS)
+            # claude-code sessions get UUID ids like real ones (enables "이어서 하기" in the UI)
+            sid = str(uuid.UUID(int=rnd.getrandbits(128), version=4)) if runner == "claude-code" \
+                else f"sess_{username}_{s:02d}"
             t = start
             rows = []
             for _ in range(rnd.randint(6, 12)):

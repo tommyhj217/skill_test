@@ -1,0 +1,9 @@
+{
+  "label": "이력 요약", "icon": "🗂",
+  "applies_to": {"always": true},
+  "inputs": [
+    {"name": "period", "label": "기간", "type": "select", "options": ["오늘", "최근 7일", "최근 30일"], "default": "최근 7일"}
+  ],
+  "prompt": "/work-history {period} 동안 내 작업 이력을 요약하고, 실패했거나 진행 중인 작업을 표로 정리해줘",
+  "output": "markdown"
+}

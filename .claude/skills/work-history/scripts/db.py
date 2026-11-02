@@ -54,6 +54,21 @@ CREATE TABLE IF NOT EXISTS activities (
     tags        TEXT,                          -- comma separated
     pinned      INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS runs (                -- actions launched from the UI
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    source_activity_id INTEGER,                   -- the history row the user clicked
+    result_activity_id INTEGER,                   -- the history row this run created
+    action_id          TEXT,                      -- continue | free | skill:<name>
+    skill_name         TEXT,
+    prompt             TEXT NOT NULL,
+    mode               TEXT NOT NULL,             -- claude | mock
+    status             TEXT NOT NULL,             -- running | done | failed | cancelled
+    session_id         TEXT,
+    started_at         TEXT NOT NULL,
+    ended_at           TEXT,
+    events             TEXT NOT NULL DEFAULT ''   -- JSON lines
+);
 CREATE INDEX IF NOT EXISTS idx_act_user_ts ON activities(user_id, ts DESC);
 CREATE INDEX IF NOT EXISTS idx_act_session ON activities(session_id);
 """
@@ -171,6 +186,28 @@ def list_sessions(conn, username):
            JOIN users u ON u.id = s.user_id
            LEFT JOIN activities a ON a.session_id = s.id
            WHERE u.username = ? GROUP BY s.id ORDER BY s.started_at DESC""", (username,))]
+
+
+def get_activity(conn, activity_id, username):
+    r = conn.execute(
+        """SELECT a.*, s.runner, s.project FROM activities a JOIN users u ON u.id=a.user_id
+           LEFT JOIN sessions s ON s.id=a.session_id WHERE a.id=? AND u.username=?""",
+        (activity_id, username)).fetchone()
+    return dict(r) if r else None
+
+
+def list_runs(conn, username, limit=50):
+    return [dict(r) for r in conn.execute(
+        """SELECT r.id, r.source_activity_id, r.action_id, r.skill_name, r.prompt, r.mode, r.status,
+                  r.session_id, r.started_at, r.ended_at
+           FROM runs r JOIN users u ON u.id=r.user_id WHERE u.username=?
+           ORDER BY r.id DESC LIMIT ?""", (username, limit))]
+
+
+def get_run(conn, run_id, username):
+    r = conn.execute("""SELECT r.* FROM runs r JOIN users u ON u.id=r.user_id
+                        WHERE r.id=? AND u.username=?""", (run_id, username)).fetchone()
+    return dict(r) if r else None
 
 
 def owned(conn, activity_id, username):
