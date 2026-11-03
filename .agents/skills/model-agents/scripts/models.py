@@ -17,6 +17,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import compat  # noqa: E402
 import registry  # noqa: E402
 import store  # noqa: E402
 
@@ -58,6 +59,7 @@ def seed(conn, reset=False):
 
 
 def main():
+    compat.utf8_stdio()
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--user", default=argparse.SUPPRESS)
     ap = argparse.ArgumentParser(parents=[common])

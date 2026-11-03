@@ -14,7 +14,8 @@ The request names a model key (e.g. `MDL-101`) and/or a model code. Get the mode
 ```bash
 python3 <skills dir>/model-agents/scripts/models.py show <MODEL> --json
 ```
-(`<skills dir>` = the folder that contains this skill, e.g. `.agents/skills` or `.claude/skills`.)
+(`<skills dir>` = the folder that contains this skill, e.g. `.agents/skills` or `.claude/skills`.
+On Windows use `python` (or `py -3`) instead of `python3`, forward slashes and double quotes.)
 (fields: key, model_code, name, product_line, status, due, spec_url, regions, launch_date, roles).
 If an in-house connector for the model data is available you may use it instead.
 

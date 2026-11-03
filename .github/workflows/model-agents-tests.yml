@@ -1,0 +1,59 @@
+name: model-agents tests
+
+on:
+  push:
+    paths: [".agents/skills/**", ".claude/skills/**", ".github/workflows/model-agents-tests.yml"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.12"]
+        include:
+          - { os: ubuntu-latest, python: "3.9" }
+          - { os: windows-latest, python: "3.9" }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Unit + end-to-end tests
+        run: python .agents/skills/model-agents/tests/test_model_agents.py -v
+
+      # Windows checkouts turn the repo's .claude/skills/* symlinks into small text files;
+      # install.py must replace them so Claude Code finds the skills.
+      - name: Repair skill links in this checkout (all OS)
+        run: python .agents/skills/model-agents/scripts/install.py --project . --runners claude,gemini --no-permissions
+      - name: Skills reachable through .claude/skills
+        shell: bash
+        run: |
+          for s in model-agents model-spec-review model-test-plan model-cert-check model-release-note team-bom-check; do
+            test -f ".claude/skills/$s/SKILL.md" || { echo "missing .claude/skills/$s/SKILL.md"; exit 1; }
+          done
+
+      - name: Menu in PowerShell (Codex on Windows uses it)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env: { MODEL_AGENTS_USER: bob }
+        run: |
+          python .agents/skills/model-agents/scripts/models.py seed --reset
+          python .agents/skills/model-agents/scripts/view.py home
+          $v = python .agents/skills/model-agents/scripts/view.py model MDL-102 --format json | ConvertFrom-Json
+          $cmd = $v.sections[0].items[4].action.command          # the command a runner would run next
+          Write-Output "next: $cmd"
+          $out = Invoke-Expression "$cmd --set ""args=부품 단종 확인"""
+          if (-not ($out -match "부품 단종 확인")) { throw "value not applied: $out" }
+          $out | Select-Object -Last 8
+
+      - name: Menu in cmd
+        if: runner.os == 'Windows'
+        shell: cmd
+        env: { MODEL_AGENTS_USER: alice }
+        run: |
+          python .agents/skills/model-agents/scripts/view.py agent MDL-101 model-spec-review --set "focus=기구" --format choices

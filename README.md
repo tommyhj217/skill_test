@@ -35,7 +35,7 @@ python3 .agents/skills/model-agents/scripts/models.py seed --reset  # load test 
 | A select with more than 4 options | 3 options + "다른 값 보기 (n)" → a follow-up question (`followups`), chained as needed. |
 | Applying choices | Each question's chosen `value` (or Other text) → `view.py agent … --set name=value` → the execution request for each runner (`invoke.by_runner`) is rebuilt with those values, followed by a "실행 / 값 다시 고르기 / 취소" confirmation. In md, changed values are marked ✏️. |
 | Invalid value | Unknown field, or a value not among the select's options → ⚠ at the top of the output, exit code 1. |
-- **Tests:** `python3 .agents/skills/model-agents/tests/test_model_agents.py` (18 tests)
+- **Tests:** `python3 .agents/skills/model-agents/tests/test_model_agents.py` (24 tests)
 
 Example (real Claude Code, user jiwoo):
 ```
@@ -90,9 +90,22 @@ metadata:
 - For custom input fields, add a `ui.json`. See `VIEW_SCHEMA.md`.
 - End the skill with `models.py use <MODEL> <skill>` so the menu shows ✅.
 
+## Windows
+- **Interpreter:** use `python` (or `py -3`) instead of `python3`. The commands the menu prints already use `python` on Windows. To use another one, set `MODEL_AGENTS_PYTHON`, e.g. `$env:MODEL_AGENTS_PYTHON="py -3"`.
+- **Quoting:** paths always use `/` and arguments use double quotes, so the same commands work in Git Bash (Claude Code), PowerShell (Codex) and cmd. Example:
+  ```powershell
+  python .agents/skills/model-agents/scripts/view.py agent MDL-101 model-spec-review --set "focus=기구"
+  ```
+- **Output encoding:** output is UTF-8 even when the console code page is cp949 or cp1252, so emoji and Korean don't break.
+- **Skill links:** with git's default setting (`core.symlinks=false`), the links in `.claude/skills/*` arrive as text files. After cloning, run this once:
+  ```powershell
+  python .agents/skills/model-agents/scripts/install.py --project .
+  ```
+  It replaces them in this order: symlink → directory junction (no admin rights needed) → copy. If it copied, refresh with `--update` after editing a skill.
+
 ## Installing into another project
 ```bash
-python3 .agents/skills/model-agents/scripts/install.py --project <path> [--runners claude,codex,copilot,gemini]
+python3 .agents/skills/model-agents/scripts/install.py --project <path> [--runners claude,codex,copilot,gemini] [--copy] [--update]
 ```
 This copies the menu and agent skills. For Claude Code it also adds permissions for `view.py` and `models.py`:
 - The skill's `allowed-tools` covers only the first turn, so the menu's follow-up turns need these project permissions.
@@ -102,7 +115,8 @@ This copies the menu and agent skills. For Claude Code it also adds permissions 
 - **Real Claude Code:**
   - The multi-turn flow worked: `/model-agents` → number → agent list and usage → input screen.
   - A plain-language value change ("범위는 기구로…") was converted to `--set` and applied to the request.
-- **Unit tests:** 18 tests cover discovery, the 3 formats, paging, follow-up questions, applying and validating values, the full loop, a drop-in skill and install.
+- **Unit tests:** 24 tests cover discovery, the 3 formats, paging, follow-up questions, applying and validating values, the full loop, a drop-in skill, install, and cross-platform handling (quoting, paths, encoding, git symlink stubs).
+- **CI** (`.github/workflows/model-agents-tests.yml`): runs the tests on Windows, macOS and Linux, plus menu smoke tests in PowerShell and cmd.
 - **Not tested:**
   - Codex, Copilot and Gemini (not installed here).
   - Claude Code's interactive choice prompt (can't be checked in headless mode).

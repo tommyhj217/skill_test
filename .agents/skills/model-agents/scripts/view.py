@@ -19,12 +19,11 @@ Schema: ../VIEW_SCHEMA.md
 """
 import argparse
 import json
-import os
-import shlex
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import compat  # noqa: E402
 import registry as reg  # noqa: E402
 import store  # noqa: E402
 
@@ -36,14 +35,12 @@ MAX_QS = 4     # … and at most 4 questions per call
 PAGE = MAX_OPTS - 1   # a page shows 3 options + "더 보기" when more remain
 
 
-def _script(name):
-    here = os.path.relpath(SCRIPTS, os.getcwd())
-    base = here if not here.startswith("..") else str(SCRIPTS)
-    return shlex.quote(f"{base}/{name}")
-
-
 def _cmd(*args):
-    return " ".join(["python3", _script("view.py"), *map(shlex.quote, args)])
+    return compat.command(SCRIPTS / "view.py", *args)
+
+
+def _models_cmd(*args):
+    return compat.command(SCRIPTS / "models.py", *args)
 
 
 def _short(ts):
@@ -99,7 +96,7 @@ def view_home(conn, user, everyone=False):
     if others and not everyone:
         actions.append({"id": "all", "label": f"다른 모델 보기 ({len(others)})", "action": _action("models", user=user)})
     actions.append({"id": "add", "label": "모델 등록",
-                    "action": {"view": None, "command": f"python3 {_script('models.py')} add <CODE> --name … --line <제품군>"}})
+                    "action": {"view": None, "command": _models_cmd("add") + " <CODE> --name … --line <제품군>"}})
     return {"view": "models" if everyone else "home", "user": user,
             "title": "전체 모델" if everyone else f"{user} 님이 진행 중인 모델",
             "subtitle": "모델을 고르면 사용할 수 있는 에이전트와 사용 여부가 나옵니다",
@@ -207,8 +204,8 @@ def view_agent(conn, ref, skill, user, chosen=None):
                      # apply choices: <command> --set name=value … (one --set per field, shell-quoted)
                      "submit": {"command": base["command"], "arg": "--set", "format": "{name}={value}"}},
             "invoke": {"skill": skill, "prompt": prompt, "by_runner": invoke},
-            "after": {"record_use": f"python3 {_script('models.py')} use {key} {skill} "
-                                    f"--summary \"<한 줄 결과>\"" + (f" --user {user}" if user else "")},
+            "after": {"record_use": _models_cmd("use", key, skill, *(["--user", user] if user else []))
+                                    + ' --summary "<한 줄 결과>"'},
             "sections": [],
             "actions": [{"id": "back", "label": f"{m['model_code']} 에이전트 목록", "action": _action("model", key, user=user)},
                         {"id": "home", "label": "내 모델 목록", "action": _action("home", user=user)}],
@@ -383,6 +380,7 @@ def parse_sets(pairs):
 
 
 def main():
+    compat.utf8_stdio()
     ap = argparse.ArgumentParser()
     ap.add_argument("view", choices=["home", "models", "model", "agent"])
     ap.add_argument("args", nargs="*")

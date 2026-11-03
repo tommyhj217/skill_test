@@ -72,7 +72,7 @@ def resolve_username():
         return os.environ["MODEL_AGENTS_USER"]
     try:
         email = subprocess.run(["git", "config", "user.email"], capture_output=True, text=True,
-                               timeout=3).stdout.strip()
+                               encoding="utf-8", errors="replace", timeout=3).stdout.strip()
         if email:
             return email.split("@")[0]
     except Exception:

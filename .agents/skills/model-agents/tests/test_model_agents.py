@@ -24,14 +24,24 @@ import registry  # noqa: E402
 import store  # noqa: E402
 
 
+def run(script, *args, check=True, env=None):
+    """Run one of our scripts with an argument list (no shell → same on Windows / macOS / Linux)."""
+    out = subprocess.run([sys.executable, str(SCRIPTS / script), *map(str, args)], capture_output=True,
+                         text=True, encoding="utf-8", env=env or os.environ)
+    if check:
+        assert out.returncode == 0, out.stderr
+    return out
+
+
 def sh(cmd):
-    out = subprocess.run(cmd, shell=True, capture_output=True, text=True, env=os.environ)
-    assert out.returncode == 0, out.stderr
+    """Run a command line *printed by the views* through the platform shell, like a runner would."""
+    out = subprocess.run(cmd, shell=True, capture_output=True, text=True, encoding="utf-8", env=os.environ)
+    assert out.returncode == 0, (cmd, out.stderr)
     return out.stdout
 
 
 def view(*args, user="alice", fmt="json"):
-    out = sh(" ".join([sys.executable, str(SCRIPTS / "view.py"), *args, "--user", user, "--format", fmt]))
+    out = run("view.py", *args, "--user", user, "--format", fmt).stdout
     return out if fmt == "md" else json.loads(out)
 
 
@@ -170,7 +180,7 @@ class Views(unittest.TestCase):
             d.rmdir()
 
     def test_set_applies_to_invoke(self):
-        conf = view("agent", "MDL-101", "model-spec-review", "--set", "'focus=기구'", "--set", "'notes=EU 대기전력'",
+        conf = view("agent", "MDL-101", "model-spec-review", "--set", "focus=기구", "--set", "notes=EU 대기전력",
                     fmt="choices")
         self.assertEqual(conf["view"], "confirm")
         self.assertEqual(conf["context"]["values"]["focus"], "기구")
@@ -184,9 +194,8 @@ class Views(unittest.TestCase):
         self.assertIn("범위: 통신", md)
 
     def test_set_invalid_values(self):
-        cmd = f"{sys.executable} {SCRIPTS / 'view.py'} agent MDL-101 model-spec-review --user alice"
-        bad = subprocess.run(cmd + " --set focus=배터리 --set nope=1", shell=True, capture_output=True, text=True,
-                             env=os.environ)
+        bad = run("view.py", "agent", "MDL-101", "model-spec-review", "--user", "alice",
+                  "--set", "focus=배터리", "--set", "nope=1", check=False)
         self.assertEqual(bad.returncode, 1)
         self.assertIn("'배터리' 는 선택지에 없습니다", bad.stdout)
         self.assertIn("알 수 없는 입력: nope", bad.stdout)
@@ -199,7 +208,7 @@ class Views(unittest.TestCase):
             self.assertIn(s, md)
 
     def test_add_model_and_drop_in_skill(self):
-        sh(f"{sys.executable} {SCRIPTS / 'models.py'} add TV-NEW-01 --name '새 TV' --line TV")
+        run("models.py", "add", "TV-NEW-01", "--name", "새 TV", "--line", "TV")
         self.assertEqual(len(view("model", "TV-NEW-01")["sections"][0]["items"]), 5)
         d = EXTRA / "hw-thermal-check"
         d.mkdir(parents=True, exist_ok=True)
@@ -225,24 +234,101 @@ class Views(unittest.TestCase):
         self.assertNotIn("hw-thermal-check", [i["id"] for i in view("model", "MDL-104")["sections"][0]["items"]])
 
     def test_show_json(self):
-        info = json.loads(sh(f"{sys.executable} {SCRIPTS / 'models.py'} show MDL-102 --json"))
+        info = json.loads(run("models.py", "show", "MDL-102", "--json").stdout)
         self.assertEqual((info["model_code"], info["roles"]["qa"]), ("MON-27Q-PRO", "bob"))
 
 
 class Install(unittest.TestCase):
     def test_install_project(self):
         proj = TMP / "proj"
-        cmd = f"{sys.executable} {SCRIPTS / 'install.py'} --project {proj} --runners claude,codex"
-        sh(cmd)
-        sh(cmd)                                                               # idempotent
+        run("install.py", "--project", proj, "--runners", "claude,codex")
+        again = run("install.py", "--project", proj, "--runners", "claude,codex").stdout       # idempotent
+        self.assertNotIn("copy", again.replace("(copy;", ""))
         names = sorted(p.name for p in (proj / ".agents" / "skills").iterdir())
         self.assertEqual(names, ["model-agents", "model-cert-check", "model-release-note", "model-spec-review",
                                  "model-test-plan", "team-bom-check"])
         self.assertTrue((proj / ".claude" / "skills" / "model-agents" / "scripts" / "view.py").exists())
         self.assertFalse((proj / ".agents" / "skills" / "model-agents" / "tests").exists())
-        allow = json.loads((proj / ".claude" / "settings.json").read_text())["permissions"]["allow"]
-        self.assertEqual(len(allow), 4)
+        allow = json.loads((proj / ".claude" / "settings.json").read_text(encoding="utf-8"))["permissions"]["allow"]
+        self.assertEqual(len(allow), 8)                                        # python3 + python variants
+        self.assertIn("Bash(python .claude/skills/model-agents/scripts/view.py:*)", allow)
         self.assertFalse((proj / ".gemini").exists())
+
+    def test_git_symlink_stub_is_replaced(self):
+        """Windows checkouts with core.symlinks=false leave '../../.agents/skills/x' text files behind."""
+        proj = TMP / "stub"
+        run("install.py", "--project", proj, "--runners", "claude", "--no-permissions")
+        stub = proj / ".claude" / "skills" / "model-test-plan"
+        if stub.is_symlink() or stub.is_file():
+            stub.unlink()
+        elif stub.is_dir():
+            import shutil
+            shutil.rmtree(stub)
+        stub.write_text("../../.agents/skills/model-test-plan", encoding="utf-8")
+        out = run("install.py", "--project", proj, "--runners", "claude", "--no-permissions").stdout
+        self.assertIn("replaced git symlink stub", out)
+        self.assertTrue((stub / "SKILL.md").exists())
+
+    def test_copy_and_update(self):
+        proj = TMP / "copied"
+        run("install.py", "--project", proj, "--runners", "claude", "--copy", "--no-permissions")
+        dest = proj / ".claude" / "skills" / "model-agents"
+        self.assertTrue(dest.is_dir() and not dest.is_symlink())
+        (dest / "SKILL.md").write_text("stale", encoding="utf-8")
+        (proj / ".agents" / "skills" / "model-agents" / "SKILL.md").write_text("stale", encoding="utf-8")
+        run("install.py", "--project", proj, "--runners", "claude", "--copy", "--update", "--no-permissions")
+        self.assertIn("name: model-agents", (dest / "SKILL.md").read_text(encoding="utf-8"))
+
+
+class CrossPlatform(unittest.TestCase):
+    def test_quoting_works_in_every_shell(self):
+        import compat
+        self.assertEqual(compat.q("MDL-101"), "MDL-101")
+        self.assertEqual(compat.q("model-spec-review"), "model-spec-review")
+        self.assertEqual(compat.q("새TV"), "새TV")                             # Hangul needs no quotes
+        self.assertEqual(compat.q("새 TV"), '"새 TV"')                         # double quotes only
+        self.assertEqual(compat.q("it's"), '"it\'s"')                       # wrapped in double quotes, not single
+
+    def test_paths_and_interpreter(self):
+        import compat
+        orig = compat.IS_WINDOWS, os.environ.pop("MODEL_AGENTS_PYTHON", None)
+        try:
+            compat.IS_WINDOWS = True
+            self.assertTrue(compat.command(SCRIPTS / "view.py", "home").startswith("python "))
+            compat.IS_WINDOWS = False
+            self.assertTrue(compat.command(SCRIPTS / "view.py", "home").startswith("python3 "))
+            os.environ["MODEL_AGENTS_PYTHON"] = "py -3"
+            self.assertTrue(compat.command(SCRIPTS / "view.py", "home").startswith("py -3 "))
+        finally:
+            compat.IS_WINDOWS = orig[0]
+            os.environ.pop("MODEL_AGENTS_PYTHON", None)
+            if orig[1]:
+                os.environ["MODEL_AGENTS_PYTHON"] = orig[1]
+        self.assertNotIn("\\", compat.shell_path(SCRIPTS / "view.py"))       # always forward slashes
+        real = os.path.relpath
+        try:                                                                   # Windows: other drive than cwd
+            os.path.relpath = lambda *a, **k: (_ for _ in ()).throw(ValueError("path is on mount 'D:'"))
+            self.assertEqual(compat.shell_path(SCRIPTS / "view.py"), (SCRIPTS / "view.py").resolve().as_posix())
+        finally:
+            os.path.relpath = real
+
+    def test_output_is_utf8_even_with_a_windows_codepage(self):
+        env = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}   # what a Windows pipe defaults to
+        models.seed(store.connect(), reset=True)
+        out = subprocess.run([sys.executable, str(SCRIPTS / "view.py"), "model", "MDL-101", "--user", "alice"],
+                             capture_output=True, env=env)
+        self.assertEqual(out.returncode, 0, out.stderr.decode("utf-8", "replace"))
+        text = out.stdout.decode("utf-8")
+        self.assertIn("🧾 BOM 점검", text)
+        self.assertIn("✅ 사용함", text)
+
+    def test_printed_commands_run_through_the_shell(self):
+        models.seed(store.connect(), reset=True)
+        v = view("model", "MDL-101")
+        cmd = v["sections"][0]["items"][1]["action"]["command"]
+        self.assertTrue(cmd.split()[0] in ("python", "python3"))
+        self.assertNotIn("'", cmd)
+        self.assertEqual(follow(v["sections"][0]["items"][1]["action"])["view"], "agent")
 
 
 if __name__ == "__main__":

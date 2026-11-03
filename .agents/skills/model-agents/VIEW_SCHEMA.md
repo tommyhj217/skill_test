@@ -71,7 +71,7 @@ shows 3 values + "다른 값 보기 (n)" whose `followup` id names the next ques
   "submit": { "command": "python3 …/view.py agent MDL-101 model-spec-review --user alice", "arg": "--set", "format": "{name}={value}" } }
 ```
 Answer of a field = picked option's `value` (`null` / "Other" → the typed text). Apply them with
-`submit.command --set 'focus=기구' --set 'notes=…' --format choices`.
+`submit.command --set "focus=기구" --set "notes=…" --format choices` (double quotes work in bash, PowerShell and cmd).
 
 **Confirm** (`view: confirm`, after `--set`) — the applied `context.values` (+ `changed`), the final `invoke`
 and one question: 실행 (`run: true` → use `invoke.by_runner`) / 값 다시 고르기 / 취소.

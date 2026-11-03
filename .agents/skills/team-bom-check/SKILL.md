@@ -18,7 +18,7 @@ Claude Code, Codex and other runners ignore it; the `model-agents` menu reads it
 
 ## Steps
 1. Get the model: `python3 <skills dir>/model-agents/scripts/models.py show <MODEL> --json`
-   (`<skills dir>` = the folder that contains this skill).
+   (`<skills dir>` = the folder that contains this skill; on Windows use `python` instead of `python3`).
 2. Read the BOM file the user points to (CSV/XLSX), or ask for it.
 3. List: EOL / NRND parts, single-source parts, parts whose cost is > 2× the median of the same category.
 4. Output a short table (부품 | 문제 | 영향 | 제안).
