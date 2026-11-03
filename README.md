@@ -7,7 +7,7 @@ Shows each user **which models they are working on** and **which agents (skills)
   - Codex, Copilot and Gemini show them as a markdown numbered menu.
   - Your own host renders the JSON.
 - **No central list.** A skill joins the menu when it declares itself with `metadata` or `ui.json`, including team-made skills.
-- **Python 3 standard library only.** Data is stored in SQLite.
+- **Python 3.10+ standard library only.** Data is stored in SQLite. Works on Windows, macOS and Linux.
 
 ## Try it (test data)
 ```bash
@@ -116,7 +116,7 @@ This copies the menu and agent skills. For Claude Code it also adds permissions 
   - The multi-turn flow worked: `/model-agents` → number → agent list and usage → input screen.
   - A plain-language value change ("범위는 기구로…") was converted to `--set` and applied to the request.
 - **Unit tests:** 24 tests cover discovery, the 3 formats, paging, follow-up questions, applying and validating values, the full loop, a drop-in skill, install, and cross-platform handling (quoting, paths, encoding, git symlink stubs).
-- **CI** (`.github/workflows/model-agents-tests.yml`): runs the tests on Windows, macOS and Linux, plus menu smoke tests in PowerShell and cmd.
+- **CI** (`.github/workflows/model-agents-tests.yml`): runs the tests on Windows, macOS and Linux (Python 3.12, plus 3.10 as the minimum), plus menu smoke tests in PowerShell and cmd.
 - **Not tested:**
   - Codex, Copilot and Gemini (not installed here).
   - Claude Code's interactive choice prompt (can't be checked in headless mode).
