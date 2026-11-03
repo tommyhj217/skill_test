@@ -1,6 +1,6 @@
 # Dynamic view schema (model agents)
 
-`scripts/view.py` produces **one view document** per screen. Every host draws it in its own way:
+`scripts/view.py` (in this skill) produces **one view document** per screen. Every host draws it in its own way:
 
 | Host | How it draws | Command |
 |---|---|---|
@@ -30,11 +30,11 @@ No host needs to know about models or agents — only this schema.
   "form": {                                                                      // agent view only
     "fields": [ { "name": "level", "label": "테스트 수준", "type": "select | text | textarea",
                   "options": ["smoke", "regression", "full"], "default": "regression" } ],
-    "prompt_template": "/model-test-plan {jira_key} ({model_code}) {level} …",
-    "context": { "jira_key": "MDL-101", "model_code": "TV-OLED65-X1", … } },
+    "prompt_template": "/model-test-plan {key} ({model_code}) {level} …",
+    "context": { "key": "MDL-101", "model_code": "TV-OLED65-X1", … } },
   "invoke": { "skill": "model-test-plan", "default_prompt": "…",
               "by_runner": { "claude": "/model-test-plan …", "codex": "$model-test-plan …", "copilot": "Use the …", "gemini": "Use the …" } },
-  "after": { "record_use": "python3 …/models.py use MDL-101 model-test-plan --summary \"…\"" },
+  "after": { "record_use": "python3 …/model-agents/scripts/models.py use MDL-101 model-test-plan --summary \"…\"" },
   "actions": [ { "id": "home", "label": "내 모델 목록", "action": { "view": "home", "command": "…" } } ],
   "prompt": "어떤 모델을 열까요?",
   "note": "…",  "empty": "…"                                                    // optional
@@ -52,7 +52,7 @@ Remove the `action` keys before passing `questions` to a tool that does not acce
 ## Declaring an agent skill
 A skill shows up as an agent of matching models when it declares itself. No central list; any runner's
 skill folder works (`.agents/skills`, `.claude/skills`, `.github/skills`, `.gemini/skills`, user-level dirs,
-or `WORK_HISTORY_SKILL_ROOTS`).
+or `MODEL_AGENTS_SKILL_ROOTS`).
 
 **A. Frontmatter only** (standard Agent Skills `metadata`; other runners ignore it)
 ```yaml
@@ -69,7 +69,7 @@ metadata:
   agent-order: "50"                  # position in the menu (default 100)
 ---
 ```
-The form then has one free-text field and the request is `/<skill> {jira_key} ({model_code}) {args}`.
+The form then has one free-text field and the request is `/<skill> {key} ({model_code}) {args}`.
 
 **B. `ui.json` next to SKILL.md** (custom form fields and request template)
 ```json
@@ -77,11 +77,11 @@ The form then has one free-text field and the request is `/<skill> {jira_key} ({
   "agent": { "role": "qa", "product_lines": ["*"], "exclude_product_lines": ["액세서리"], "order": 20 },
   "inputs": [ { "name": "level", "label": "테스트 수준", "type": "select", "options": ["smoke","regression","full"], "default": "regression" },
               { "name": "regions", "label": "대상 지역", "type": "text", "default": "{regions}" } ],
-  "prompt": "/model-test-plan {jira_key} ({model_code}) {level} 테스트 계획 — 지역: {regions}" }
+  "prompt": "/model-test-plan {key} ({model_code}) {level} 테스트 계획 — 지역: {regions}" }
 ```
-`{…}` in defaults and `prompt` are filled from the model: `jira_key, model_code, model_name, product_line, due,
-regions, spec_url, launch_date, status, role, assignee`. The leading `/skill` is rewritten per runner
-(`$skill` for Codex, …) from `runners.json`.
+`{…}` in defaults and `prompt` are filled from the model: `key, model_code, model_name, product_line, due,
+status` plus every extra field of the model (sample: `regions, spec_url, launch_date`) and `role, assignee`.
+The leading `/skill` is rewritten per runner (`$skill` for Codex, …) — see `SKILL_SYNTAX` in `scripts/registry.py`.
 
 To make the menu count a run, the skill's last step should be
-`python3 <skills dir>/work-history/scripts/models.py use <MODEL> <skill> --summary "…"`.
+`python3 <skills dir>/model-agents/scripts/models.py use <MODEL> <skill> --summary "…"`.

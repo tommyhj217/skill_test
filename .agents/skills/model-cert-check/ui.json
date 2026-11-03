@@ -22,7 +22,7 @@
       "default": "전체"
     }
   ],
-  "prompt": "/model-cert-check {jira_key} ({model_code}) 인증 체크리스트 — 지역: {regions}, 범위: {scope}, 출시: {launch_date}",
+  "prompt": "/model-cert-check {key} ({model_code}) 인증 체크리스트 — 지역: {regions}, 범위: {scope}, 출시: {launch_date}",
   "output": "markdown",
   "agent": {
     "role": "cert",

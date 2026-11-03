@@ -1,0 +1,71 @@
+{
+  "_doc": "TEST DATA: who ran which agent on which model, N days ago.",
+  "usage": [
+    {
+      "model": "MDL-105",
+      "skill": "model-spec-review",
+      "user": "alice",
+      "days_ago": 12
+    },
+    {
+      "model": "MDL-105",
+      "skill": "model-test-plan",
+      "user": "bob",
+      "days_ago": 10
+    },
+    {
+      "model": "MDL-105",
+      "skill": "model-cert-check",
+      "user": "jiwoo",
+      "days_ago": 9
+    },
+    {
+      "model": "MDL-105",
+      "skill": "model-release-note",
+      "user": "alice",
+      "days_ago": 8
+    },
+    {
+      "model": "MDL-101",
+      "skill": "model-spec-review",
+      "user": "alice",
+      "days_ago": 3
+    },
+    {
+      "model": "MDL-101",
+      "skill": "model-spec-review",
+      "user": "alice",
+      "days_ago": 1
+    },
+    {
+      "model": "MDL-101",
+      "skill": "model-test-plan",
+      "user": "bob",
+      "days_ago": 2
+    },
+    {
+      "model": "MDL-101",
+      "skill": "model-cert-check",
+      "user": "alice",
+      "days_ago": 1
+    },
+    {
+      "model": "MDL-103",
+      "skill": "model-release-note",
+      "user": "alice",
+      "days_ago": 5
+    },
+    {
+      "model": "MDL-102",
+      "skill": "model-cert-check",
+      "user": "jiwoo",
+      "days_ago": 1
+    },
+    {
+      "model": "MDL-102",
+      "skill": "model-test-plan",
+      "user": "bob",
+      "days_ago": 4
+    }
+  ]
+}

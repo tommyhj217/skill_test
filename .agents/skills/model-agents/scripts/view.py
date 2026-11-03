@@ -12,8 +12,8 @@ Views (each item's `action.command` produces the next view):
   view.py model MDL-101            agents available for the model + whether I / the team used them
   view.py agent MDL-101 <skill>    the agent's form (fields from the skill's ui.json, defaults from the model)
                                    + how to invoke the skill on each runner
-Common: --user NAME (default: WORK_HISTORY_USER → git e-mail → OS user), --page N (choices paging)
-Schema: ../ui/VIEW_SCHEMA.md
+Common: --user NAME (default: MODEL_AGENTS_USER → git e-mail → OS user), --page N (choices paging)
+Schema: ../VIEW_SCHEMA.md
 """
 import argparse
 import json
@@ -23,10 +23,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-import db  # noqa: E402
-import jira_sync  # noqa: E402
-import runners  # noqa: E402
-import skills_registry as reg  # noqa: E402
+import registry as reg  # noqa: E402
+import store  # noqa: E402
 
 SCRIPTS = Path(__file__).resolve().parent
 ROLE = {"dev": "개발", "qa": "QA", "cert": "인증", "pm": "PM"}
@@ -55,14 +53,6 @@ def _action(view, *args, user=None):
 
 # ───────────── view builders ─────────────
 
-def _assigned(conn, user):
-    out = {}
-    for r in conn.execute("""SELECT m.jira_key, g.role FROM agents g JOIN models m ON m.id = g.model_id
-                             WHERE g.assignee = ?""", (user,)):
-        out.setdefault(r["jira_key"], []).append(r["role"])
-    return out
-
-
 def _model_item(m, roles, user):
     badges = []
     if m["my_last"]:
@@ -74,23 +64,30 @@ def _model_item(m, roles, user):
         badges.append({"text": "내 담당: " + ", ".join(ROLE.get(r, r) for r in sorted(set(roles))), "tone": "warn"})
     if m.get("due"):
         badges.append({"text": f"마감 {m['due']}", "tone": "muted"})
-    return {"id": m["jira_key"], "title": f"{m['model_code']} · {m['name'] or ''}".strip(" ·"),
-            "subtitle": " · ".join(x for x in (m["jira_key"] if m["jira_key"] != m["model_code"] else "",
+    return {"id": m["key"], "title": f"{m['model_code']} · {m['name'] or ''}".strip(" ·"),
+            "subtitle": " · ".join(x for x in (m["key"] if m["key"] != m["model_code"] else "",
                                                m.get("product_line") or "") if x),
-            "badges": badges, "action": _action("model", m["jira_key"], user=user)}
+            "badges": badges, "action": _action("model", m["key"], user=user)}
+
+
+def models_with_agents(conn, user):
+    """Attach newly installed agent skills to every model, then return the overview."""
+    agents = reg.load_agents()
+    for m in conn.execute("SELECT id, product_line, fields FROM models").fetchall():
+        store.ensure_agents(conn, {"id": m["id"], "fields": json.loads(m["fields"])},
+                            reg.agents_for(m["product_line"], agents))
+    return store.models_overview(conn, user)
 
 
 def view_home(conn, user, everyone=False):
-    rows = db.models_for_user(conn, user)
-    assigned = _assigned(conn, user)
-    mine = [m for m in rows if m["my_last"] or m["jira_key"] in assigned]
+    rows = models_with_agents(conn, user)
+    mine = [m for m in rows if m["my_last"] or m["my_roles"]]
     others = [m for m in rows if m not in mine]
     # ran first (most recent), then only-assigned (by due date)
     ran = sorted([m for m in mine if m["my_last"]], key=lambda m: m["my_last"], reverse=True)
     only_assigned = sorted([m for m in mine if not m["my_last"]], key=lambda m: m.get("due") or "9999")
-    sections = [{"title": "최근 실행한 모델", "items": [_model_item(m, assigned.get(m["jira_key"]), user) for m in ran]},
-                {"title": "내 담당 (아직 실행 안 함)",
-                 "items": [_model_item(m, assigned.get(m["jira_key"]), user) for m in only_assigned]}]
+    sections = [{"title": "최근 실행한 모델", "items": [_model_item(m, m["my_roles"], user) for m in ran]},
+                {"title": "내 담당 (아직 실행 안 함)", "items": [_model_item(m, m["my_roles"], user) for m in only_assigned]}]
     if everyone:
         sections.append({"title": "다른 모델", "items": [_model_item(m, None, user) for m in others]})
     sections = [s for s in sections if s["items"]]
@@ -98,7 +95,7 @@ def view_home(conn, user, everyone=False):
     if others and not everyone:
         actions.append({"id": "all", "label": f"다른 모델 보기 ({len(others)})", "action": _action("models", user=user)})
     actions.append({"id": "add", "label": "모델 등록",
-                    "action": {"view": None, "command": f"python3 {_script('models.py')} add <CODE> --name … --line …"}})
+                    "action": {"view": None, "command": f"python3 {_script('models.py')} add <CODE> --name … --line <제품군>"}})
     return {"view": "models" if everyone else "home", "user": user,
             "title": "전체 모델" if everyone else f"{user} 님이 진행 중인 모델",
             "subtitle": "모델을 고르면 사용할 수 있는 에이전트와 사용 여부가 나옵니다",
@@ -108,7 +105,7 @@ def view_home(conn, user, everyone=False):
 
 
 def _ctx(model, agent=None):
-    ctx = {**model["fields"], "jira_key": model["jira_key"], "model_code": model["model_code"],
+    ctx = {**model["fields"], "key": model["key"], "model_code": model["model_code"],
            "model_name": model.get("name"), "product_line": model.get("product_line"), "due": model.get("due")}
     if agent:
         ctx.update(role=agent.get("role"), assignee=agent.get("assignee"))
@@ -116,17 +113,17 @@ def _ctx(model, agent=None):
 
 
 def view_model(conn, ref, user):
-    m = db.resolve_model(conn, ref)
+    m = store.resolve_model(conn, ref)
     if not m:
         return {"view": "error", "title": f"모델을 찾을 수 없습니다: {ref}", "sections": [],
                 "actions": [{"id": "home", "label": "내 모델로", "action": _action("home", user=user)}]}
-    jira_sync.ensure_agents(conn, m)
-    skills = reg.load_skills()
-    rows = db.model_agents(conn, m["id"], user)
+    skills = reg.load_agents()
+    store.ensure_agents(conn, m, reg.agents_for(m.get("product_line"), skills))
+    rows = store.model_agents(conn, m["id"], user)
     items, hidden = [], []
     for a in rows:
         sk = skills.get(a["skill_name"])
-        if not sk or not sk.get("agent") or not reg.agent_applies(sk, m.get("product_line")):
+        if not sk or not reg.applies(sk, m.get("product_line")):
             hidden.append(a["skill_name"])
             continue
         used = a["my_runs"] > 0
@@ -139,11 +136,11 @@ def view_model(conn, ref, user):
         items.append({"id": a["skill_name"], "title": f"{sk.get('icon', '')} {sk['label']}".strip(),
                       "subtitle": f"/{a['skill_name']} — {sk.get('description', '')[:90]}",
                       "used": used, "badges": badges,
-                      "action": _action("agent", m["jira_key"], a["skill_name"], user=user)})
+                      "action": _action("agent", m["key"], a["skill_name"], user=user)})
     f = m["fields"]
     card = [{"label": "모델", "value": f"{m['model_code']} · {m.get('name') or ''}"},
             {"label": "제품군", "value": m.get("product_line") or "-"},
-            {"label": "키", "value": m["jira_key"], "link": m.get("url")},
+            {"label": "키", "value": m["key"], "link": m.get("url")},
             {"label": "마감 / 출시", "value": f"{m.get('due') or '-'} / {f.get('launch_date') or '-'}"},
             {"label": "지역", "value": f.get("regions") or "-"}]
     if f.get("spec_url"):
@@ -154,28 +151,27 @@ def view_model(conn, ref, user):
     return {"view": "model", "user": user, "title": f"{m['model_code']} 에이전트",
             "subtitle": f"사용 가능한 에이전트 {len(items)}개 · 내가 사용 {used_n}개", "card": card,
             "sections": [{"title": "사용 가능한 에이전트", "items": items}],
-            "note": f"설치되지 않았거나 이 제품군에 해당하지 않는 에이전트: {', '.join(hidden)}" if hidden else None,
+            "note": f"설치되지 않았거나 이 제품군에 해당하지 않아 숨긴 에이전트: {', '.join(hidden)}" if hidden else None,
             "actions": [{"id": "home", "label": "내 모델 목록", "action": _action("home", user=user)}],
             "prompt": "어떤 에이전트를 실행할까요?"}
 
 
 def view_agent(conn, ref, skill, user):
-    m = db.resolve_model(conn, ref)
-    sk = reg.load_skills().get(skill)
+    m = store.resolve_model(conn, ref)
+    sk = reg.load_agents().get(skill)
     if not m or not sk:
         return {"view": "error", "title": f"모델 또는 스킬을 찾을 수 없습니다: {ref} / {skill}", "sections": [],
                 "actions": [{"id": "home", "label": "내 모델로", "action": _action("home", user=user)}]}
-    ag = next((a for a in db.list_agents(conn, model_key=m["jira_key"]) if a["skill_name"] == skill), None)
-    ctx = _ctx(m, ag)
+    ctx = _ctx(m, store.get_agent(conn, m["id"], skill))
     fields = []
     for i in sk.get("inputs", []):
         fld = {k: i[k] for k in ("name", "label", "type", "options") if k in i}
-        fld["default"] = reg.render_prompt(str(i.get("default", "")), {}, ctx)
+        fld["default"] = reg.fill(str(i.get("default", "")), ctx)
         fields.append(fld)
     values = {f["name"]: f["default"] for f in fields}
-    prompt = reg.render_prompt(sk["prompt"], values, ctx)
-    invoke = {k: runners.adapt_prompt(k, prompt, skill) for k in runners.ADAPTERS}
-    model_arg = m["jira_key"]
+    prompt = reg.fill(sk["prompt"], {**ctx, **values})
+    invoke = {k: reg.for_runner(k, prompt, skill) for k in reg.SKILL_SYNTAX}
+    model_arg = m["key"]
     return {"view": "agent", "user": user, "title": f"{sk.get('icon', '')} {sk['label']} — {m['model_code']}".strip(),
             "subtitle": sk.get("description", "")[:200],
             "form": {"fields": fields, "prompt_template": sk["prompt"], "context": {k: v for k, v in ctx.items()
@@ -305,8 +301,8 @@ def main():
     need = {"model": 1, "agent": 2}.get(a.view, 0)
     if len(a.args) < need:
         ap.error(f"'{a.view}' needs {need} argument(s)")
-    user = a.user or db.resolve_username()
-    v = build(db.connect(), a.view, a.args, user)
+    user = a.user or store.resolve_username()
+    v = build(store.connect(), a.view, a.args, user)
     if a.format == "json":
         v.pop("_self_action", None)
         print(json.dumps(v, ensure_ascii=False, indent=2))

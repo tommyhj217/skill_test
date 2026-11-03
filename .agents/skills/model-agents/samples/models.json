@@ -1,0 +1,93 @@
+{
+  "_doc": "TEST DATA. Replace with your in-house source (see scripts/models.py → load_models). Required: key, model_code, product_line. roles maps an agent role (agent-role of a skill) to a username.",
+  "models": [
+    {
+      "key": "MDL-101",
+      "model_code": "TV-OLED65-X1",
+      "name": "65인치 OLED TV X1",
+      "product_line": "TV",
+      "status": "In Progress",
+      "due": "2026-11-20",
+      "regions": "KR, US, EU",
+      "launch_date": "2027-01-15",
+      "spec_url": "https://wiki.example.com/spec/TV-OLED65-X1",
+      "url": "https://jira.example.com/browse/MDL-101",
+      "roles": {
+        "pm": "tommyhj",
+        "dev": "alice",
+        "qa": "bob",
+        "cert": "jiwoo"
+      }
+    },
+    {
+      "key": "MDL-102",
+      "model_code": "MON-27Q-PRO",
+      "name": "27인치 QHD 모니터 Pro",
+      "product_line": "모니터",
+      "status": "In Progress",
+      "due": "2026-11-12",
+      "regions": "KR, US",
+      "launch_date": "2026-12-10",
+      "spec_url": "https://wiki.example.com/spec/MON-27Q-PRO",
+      "url": "https://jira.example.com/browse/MDL-102",
+      "roles": {
+        "pm": "tommyhj",
+        "dev": "alice",
+        "qa": "bob",
+        "cert": "jiwoo"
+      }
+    },
+    {
+      "key": "MDL-103",
+      "model_code": "SPK-BAR-500",
+      "name": "사운드바 500",
+      "product_line": "오디오",
+      "status": "To Do",
+      "due": "2026-12-05",
+      "regions": "KR, EU, JP",
+      "launch_date": "2027-02-01",
+      "spec_url": "https://wiki.example.com/spec/SPK-BAR-500",
+      "url": "https://jira.example.com/browse/MDL-103",
+      "roles": {
+        "pm": "tommyhj",
+        "dev": "bob",
+        "qa": "alice",
+        "cert": "jiwoo"
+      }
+    },
+    {
+      "key": "MDL-104",
+      "model_code": "ACC-REMOTE-V2",
+      "name": "음성 리모컨 V2",
+      "product_line": "액세서리",
+      "status": "To Do",
+      "due": "2026-11-28",
+      "regions": "KR",
+      "launch_date": "2026-12-20",
+      "spec_url": "https://wiki.example.com/spec/ACC-REMOTE-V2",
+      "url": "https://jira.example.com/browse/MDL-104",
+      "roles": {
+        "pm": "tommyhj",
+        "dev": "alice"
+      }
+    },
+    {
+      "key": "MDL-105",
+      "model_code": "TV-QLED55-S3",
+      "name": "55인치 QLED TV S3",
+      "product_line": "TV",
+      "status": "Done",
+      "due": "2026-10-31",
+      "regions": "KR, US",
+      "launch_date": "2026-11-05",
+      "spec_url": "https://wiki.example.com/spec/TV-QLED55-S3",
+      "url": "https://jira.example.com/browse/MDL-105",
+      "roles": {
+        "pm": "tommyhj",
+        "dev": "alice",
+        "qa": "bob",
+        "cert": "jiwoo"
+      }
+    }
+  ]
+}

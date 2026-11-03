@@ -28,7 +28,7 @@
       "default": ""
     }
   ],
-  "prompt": "/model-spec-review {jira_key} ({model_code}) 사양 검토 — 범위: {focus}, 사양서: {spec} {notes}",
+  "prompt": "/model-spec-review {key} ({model_code}) 사양 검토 — 범위: {focus}, 사양서: {spec} {notes}",
   "output": "markdown",
   "agent": {
     "role": "dev",

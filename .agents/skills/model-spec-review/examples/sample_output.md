@@ -1,6 +1,6 @@
-## {model_code} 사양 검토 결과 ({jira_key})
+## TV-OLED65-X1 사양 검토 결과 (MDL-101)
 
-**모델**: {model_name} · **제품군**: {product_line} · **출시 지역**: {regions}
+**모델**: 65인치 OLED TV X1 · **제품군**: TV · **출시 지역**: KR, US, EU
 
 | 영역 | 항목 | 문제 | 심각도 | 제안 |
 |---|---|---|---|---|
@@ -9,5 +9,5 @@
 | 통신 | Wi-Fi 대역 | 6GHz 지원 여부 미기재 | 낮음 | 지역별 지원 여부 명시 |
 
 ### PM 확인 필요
-- 출시일 {launch_date} 기준 인증 일정과 겹치는 항목 확인
-- 사양서: {spec_url}
+- 출시일 2027-01-15 기준 인증 일정과 겹치는 항목 확인
+- 사양서: https://wiki.example.com/spec/TV-OLED65-X1

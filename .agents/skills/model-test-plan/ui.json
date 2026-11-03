@@ -26,7 +26,7 @@
       "default": ""
     }
   ],
-  "prompt": "/model-test-plan {jira_key} ({model_code}) {level} 테스트 계획 — 지역: {regions}, 마감: {due} {notes}",
+  "prompt": "/model-test-plan {key} ({model_code}) {level} 테스트 계획 — 지역: {regions}, 마감: {due} {notes}",
   "output": "markdown",
   "agent": {
     "role": "qa",

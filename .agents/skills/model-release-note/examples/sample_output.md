@@ -1,10 +1,10 @@
-## {model_name} ({model_code}) 릴리즈 노트
+## 65인치 OLED TV X1 (TV-OLED65-X1) 릴리즈 노트
 
-- **Jira**: {jira_key} · **상태**: {status}
-- **출시**: {launch_date} · **지역**: {regions}
+- **키**: MDL-101 · **상태**: In Progress
+- **출시**: 2027-01-15 · **지역**: KR, US, EU
 
 ### 주요 내용
-- 신규 {product_line} 라인업 모델
+- 신규 TV 라인업 모델
 - 사양 검토, 테스트, 인증 진행 상황은 각 에이전트 결과를 참고하세요
 
 ### 알려진 이슈
