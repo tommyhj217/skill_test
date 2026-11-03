@@ -1,0 +1,320 @@
+#!/usr/bin/env python3
+"""Dynamic UI for the model agents — rendered *inside* whatever runner calls the skill.
+
+One view document (JSON), three renderers:
+  --format md       markdown with numbered choices      → any chat/CLI runner (Codex, Copilot, Gemini, …)
+  --format choices  AskUserQuestion-shaped questions     → hosts with a structured choice tool (Claude Code)
+  --format json     the full view document               → your own host / portal renders it as it likes
+
+Views (each item's `action.command` produces the next view):
+  view.py home                     models I am working on (ran an agent, or own a role), most recent first
+  view.py models                   all models
+  view.py model MDL-101            agents available for the model + whether I / the team used them
+  view.py agent MDL-101 <skill>    the agent's form (fields from the skill's ui.json, defaults from the model)
+                                   + how to invoke the skill on each runner
+Common: --user NAME (default: WORK_HISTORY_USER → git e-mail → OS user), --page N (choices paging)
+Schema: ../ui/VIEW_SCHEMA.md
+"""
+import argparse
+import json
+import os
+import shlex
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import db  # noqa: E402
+import jira_sync  # noqa: E402
+import runners  # noqa: E402
+import skills_registry as reg  # noqa: E402
+
+SCRIPTS = Path(__file__).resolve().parent
+ROLE = {"dev": "개발", "qa": "QA", "cert": "인증", "pm": "PM"}
+ST = {"todo": "할 일", "in_progress": "진행 중", "done": "완료"}
+PAGE = 3  # items per AskUserQuestion page (+1 slot for "더 보기")
+
+
+def _script(name):
+    here = os.path.relpath(SCRIPTS, os.getcwd())
+    base = here if not here.startswith("..") else str(SCRIPTS)
+    return shlex.quote(f"{base}/{name}")
+
+
+def _cmd(*args):
+    return " ".join(["python3", _script("view.py"), *map(shlex.quote, args)])
+
+
+def _short(ts):
+    return (ts or "")[:16].replace("T", " ")
+
+
+def _action(view, *args, user=None):
+    extra = ["--user", user] if user else []
+    return {"view": view, "args": list(args), "command": _cmd(view, *args, *extra)}
+
+
+# ───────────── view builders ─────────────
+
+def _assigned(conn, user):
+    out = {}
+    for r in conn.execute("""SELECT m.jira_key, g.role FROM agents g JOIN models m ON m.id = g.model_id
+                             WHERE g.assignee = ?""", (user,)):
+        out.setdefault(r["jira_key"], []).append(r["role"])
+    return out
+
+
+def _model_item(m, roles, user):
+    badges = []
+    if m["my_last"]:
+        badges.append({"text": f"최근 실행 {_short(m['my_last'])}", "tone": "info"})
+        badges.append({"text": f"에이전트 {m['my_agents_used']}/{m['agent_count']} 사용", "tone": "ok"})
+    else:
+        badges.append({"text": f"에이전트 {m['agent_count']}개 · 아직 사용 안 함", "tone": "muted"})
+    if roles:
+        badges.append({"text": "내 담당: " + ", ".join(ROLE.get(r, r) for r in sorted(set(roles))), "tone": "warn"})
+    if m.get("due"):
+        badges.append({"text": f"마감 {m['due']}", "tone": "muted"})
+    return {"id": m["jira_key"], "title": f"{m['model_code']} · {m['name'] or ''}".strip(" ·"),
+            "subtitle": " · ".join(x for x in (m["jira_key"] if m["jira_key"] != m["model_code"] else "",
+                                               m.get("product_line") or "") if x),
+            "badges": badges, "action": _action("model", m["jira_key"], user=user)}
+
+
+def view_home(conn, user, everyone=False):
+    rows = db.models_for_user(conn, user)
+    assigned = _assigned(conn, user)
+    mine = [m for m in rows if m["my_last"] or m["jira_key"] in assigned]
+    others = [m for m in rows if m not in mine]
+    # ran first (most recent), then only-assigned (by due date)
+    ran = sorted([m for m in mine if m["my_last"]], key=lambda m: m["my_last"], reverse=True)
+    only_assigned = sorted([m for m in mine if not m["my_last"]], key=lambda m: m.get("due") or "9999")
+    sections = [{"title": "최근 실행한 모델", "items": [_model_item(m, assigned.get(m["jira_key"]), user) for m in ran]},
+                {"title": "내 담당 (아직 실행 안 함)",
+                 "items": [_model_item(m, assigned.get(m["jira_key"]), user) for m in only_assigned]}]
+    if everyone:
+        sections.append({"title": "다른 모델", "items": [_model_item(m, None, user) for m in others]})
+    sections = [s for s in sections if s["items"]]
+    actions = []
+    if others and not everyone:
+        actions.append({"id": "all", "label": f"다른 모델 보기 ({len(others)})", "action": _action("models", user=user)})
+    actions.append({"id": "add", "label": "모델 등록",
+                    "action": {"view": None, "command": f"python3 {_script('models.py')} add <CODE> --name … --line …"}})
+    return {"view": "models" if everyone else "home", "user": user,
+            "title": "전체 모델" if everyone else f"{user} 님이 진행 중인 모델",
+            "subtitle": "모델을 고르면 사용할 수 있는 에이전트와 사용 여부가 나옵니다",
+            "sections": sections, "actions": actions,
+            "prompt": "어떤 모델을 열까요?",
+            "empty": "진행 중인 모델이 없습니다. '다른 모델 보기'나 '모델 등록'을 선택하세요." if not sections else None}
+
+
+def _ctx(model, agent=None):
+    ctx = {**model["fields"], "jira_key": model["jira_key"], "model_code": model["model_code"],
+           "model_name": model.get("name"), "product_line": model.get("product_line"), "due": model.get("due")}
+    if agent:
+        ctx.update(role=agent.get("role"), assignee=agent.get("assignee"))
+    return ctx
+
+
+def view_model(conn, ref, user):
+    m = db.resolve_model(conn, ref)
+    if not m:
+        return {"view": "error", "title": f"모델을 찾을 수 없습니다: {ref}", "sections": [],
+                "actions": [{"id": "home", "label": "내 모델로", "action": _action("home", user=user)}]}
+    jira_sync.ensure_agents(conn, m)
+    skills = reg.load_skills()
+    rows = db.model_agents(conn, m["id"], user)
+    items, hidden = [], []
+    for a in rows:
+        sk = skills.get(a["skill_name"])
+        if not sk or not sk.get("agent") or not reg.agent_applies(sk, m.get("product_line")):
+            hidden.append(a["skill_name"])
+            continue
+        used = a["my_runs"] > 0
+        badges = [{"text": f"✅ 사용함 {a['my_runs']}회 · 최근 {_short(a['my_last'])}" if used else "⚪ 미사용",
+                   "tone": "ok" if used else "muted"},
+                  {"text": f"팀 {a['team_runs']}회 ({a['team_users']}명)", "tone": "muted"},
+                  {"text": f"담당 {a['assignee'] or '-'}" + (" (나)" if a["assignee"] == user else ""),
+                   "tone": "warn" if a["assignee"] == user else "muted"},
+                  {"text": ST.get(a["status"], a["status"]), "tone": "info"}]
+        items.append({"id": a["skill_name"], "title": f"{sk.get('icon', '')} {sk['label']}".strip(),
+                      "subtitle": f"/{a['skill_name']} — {sk.get('description', '')[:90]}",
+                      "used": used, "badges": badges,
+                      "action": _action("agent", m["jira_key"], a["skill_name"], user=user)})
+    f = m["fields"]
+    card = [{"label": "모델", "value": f"{m['model_code']} · {m.get('name') or ''}"},
+            {"label": "제품군", "value": m.get("product_line") or "-"},
+            {"label": "키", "value": m["jira_key"], "link": m.get("url")},
+            {"label": "마감 / 출시", "value": f"{m.get('due') or '-'} / {f.get('launch_date') or '-'}"},
+            {"label": "지역", "value": f.get("regions") or "-"}]
+    if f.get("spec_url"):
+        card.append({"label": "사양서", "value": f["spec_url"], "link": f["spec_url"]})
+    order = {i["id"]: (skills[i["id"]]["agent"]["order"], i["title"]) for i in items}
+    items.sort(key=lambda i: order[i["id"]])
+    used_n = sum(1 for i in items if i["used"])
+    return {"view": "model", "user": user, "title": f"{m['model_code']} 에이전트",
+            "subtitle": f"사용 가능한 에이전트 {len(items)}개 · 내가 사용 {used_n}개", "card": card,
+            "sections": [{"title": "사용 가능한 에이전트", "items": items}],
+            "note": f"설치되지 않았거나 이 제품군에 해당하지 않는 에이전트: {', '.join(hidden)}" if hidden else None,
+            "actions": [{"id": "home", "label": "내 모델 목록", "action": _action("home", user=user)}],
+            "prompt": "어떤 에이전트를 실행할까요?"}
+
+
+def view_agent(conn, ref, skill, user):
+    m = db.resolve_model(conn, ref)
+    sk = reg.load_skills().get(skill)
+    if not m or not sk:
+        return {"view": "error", "title": f"모델 또는 스킬을 찾을 수 없습니다: {ref} / {skill}", "sections": [],
+                "actions": [{"id": "home", "label": "내 모델로", "action": _action("home", user=user)}]}
+    ag = next((a for a in db.list_agents(conn, model_key=m["jira_key"]) if a["skill_name"] == skill), None)
+    ctx = _ctx(m, ag)
+    fields = []
+    for i in sk.get("inputs", []):
+        fld = {k: i[k] for k in ("name", "label", "type", "options") if k in i}
+        fld["default"] = reg.render_prompt(str(i.get("default", "")), {}, ctx)
+        fields.append(fld)
+    values = {f["name"]: f["default"] for f in fields}
+    prompt = reg.render_prompt(sk["prompt"], values, ctx)
+    invoke = {k: runners.adapt_prompt(k, prompt, skill) for k in runners.ADAPTERS}
+    model_arg = m["jira_key"]
+    return {"view": "agent", "user": user, "title": f"{sk.get('icon', '')} {sk['label']} — {m['model_code']}".strip(),
+            "subtitle": sk.get("description", "")[:200],
+            "form": {"fields": fields, "prompt_template": sk["prompt"], "context": {k: v for k, v in ctx.items()
+                                                                                    if isinstance(v, (str, int, float))}},
+            "invoke": {"skill": skill, "default_prompt": prompt, "by_runner": invoke},
+            "after": {"record_use": f"python3 {_script('models.py')} use {model_arg} {skill} "
+                                    f"--summary \"<한 줄 결과>\"" + (f" --user {user}" if user else "")},
+            "sections": [],
+            "actions": [{"id": "back", "label": f"{m['model_code']} 에이전트 목록", "action": _action("model", model_arg, user=user)},
+                        {"id": "home", "label": "내 모델 목록", "action": _action("home", user=user)}],
+            "prompt": "이대로 실행할까요? (기본값을 쓰거나 바꿀 값을 알려 주세요)"}
+
+
+# ───────────── renderers ─────────────
+
+def render_md(v):
+    out = [f"## {v['title']}"]
+    if v.get("subtitle"):
+        out.append(f"_{v['subtitle']}_")
+    if v.get("card"):
+        out.append("")
+        out.append("| | |\n|---|---|")
+        out += [f"| {c['label']} | {('[' + c['value'] + '](' + c['link'] + ')') if c.get('link') else c['value']} |"
+                for c in v["card"]]
+    n = 0
+    numbered = []
+    for sec in v.get("sections", []):
+        out.append(f"\n**{sec['title']}**\n")
+        if v["view"] == "model":
+            out.append("| # | 에이전트 | 내 사용 | 팀 | 담당 | 상태 |\n|---|---|---|---|---|---|")
+            for it in sec["items"]:
+                n += 1
+                numbered.append(it)
+                b = [x["text"] for x in it["badges"]]
+                out.append(f"| {n} | {it['title']} `/{it['id']}` | {b[0]} | {b[1]} | {b[2]} | {b[3]} |")
+        else:
+            for it in sec["items"]:
+                n += 1
+                numbered.append(it)
+                sub = f" ({it['subtitle']})" if it.get("subtitle") else ""
+                out.append(f"{n}. **{it['title']}**{sub} — " + " · ".join(x["text"] for x in it["badges"]))
+    if v.get("form"):
+        out.append("\n| 입력 | 기본값 | 선택지 |\n|---|---|---|")
+        for f in v["form"]["fields"]:
+            out.append(f"| {f.get('label', f['name'])} (`{f['name']}`) | {f['default'] or '—'} | "
+                       f"{', '.join(f.get('options', [])) or '자유 입력'} |")
+        out.append("\n**실행 방법** (러너별)")
+        for k, p in v["invoke"]["by_runner"].items():
+            out.append(f"- {k}: `{p}`")
+        out.append(f"\n실행 후 기록: `{v['after']['record_use']}`")
+    if v.get("note"):
+        out.append(f"\n> {v['note']}")
+    if v.get("empty"):
+        out.append(f"\n{v['empty']}")
+    acts = [a["label"] for a in v.get("actions", [])]
+    letters = "abcdefgh"
+    if acts:
+        out.append("\n" + " · ".join(f"[{letters[i]}] {a}" for i, a in enumerate(acts)))
+    if v.get("form"):
+        out.append("\n**이대로 실행할까요?** '실행'이라고 답하거나 바꿀 값을 알려 주세요"
+                   + (" (또는 문자로 이동)." if acts else "."))
+    elif v.get("prompt"):
+        hint = f"번호(1–{n})" if n else ""
+        out.append(f"\n**{v['prompt']}** {hint}{' 또는 ' if hint and acts else ''}{'문자' if acts else ''}로 답해 주세요.")
+    return "\n".join(out)
+
+
+def render_choices(v, page=1):
+    """AskUserQuestion-shaped: max 4 options per question; overflow → '더 보기' with the next page command."""
+    items = [it for sec in v.get("sections", []) for it in sec["items"]]
+    qs = []
+    if v.get("form"):
+        for f in v["form"]["fields"][:4]:
+            opts = ([{"label": o, "description": "기본값" if o == f["default"] else ""} for o in f.get("options", [])][:4]
+                    if f.get("options") else
+                    [{"label": "기본값 사용", "description": f["default"] or "(비워 둠)"},
+                     {"label": "비워 두기", "description": "이 값 없이 실행"}])
+            if len(opts) < 2:
+                opts.append({"label": "비워 두기", "description": ""})
+            qs.append({"question": f"{f.get('label', f['name'])}?", "header": f["name"][:12],
+                       "options": opts, "multiSelect": False})
+        return {"view": v["view"], "questions": qs, "then": v["invoke"], "after": v["after"]}
+    start = (page - 1) * PAGE
+    chunk = items[start:start + PAGE]
+    opts = [{"label": it["title"][:40], "description": " · ".join(b["text"] for b in it["badges"])[:120],
+             "action": it["action"]} for it in chunk]
+    more = len(items) - (start + len(chunk))
+    if more > 0:
+        nxt = {**v.get("_self_action", {})}
+        opts.append({"label": f"더 보기 ({more})", "description": "다음 페이지",
+                     "action": {"command": (nxt.get("command") or "") + f" --format choices --page {page + 1}"}})
+    else:
+        for a in v.get("actions", [])[:4 - len(opts)]:
+            opts.append({"label": a["label"][:40], "description": "", "action": a["action"]})
+    while len(opts) < 2:
+        opts.append({"label": "닫기", "description": "메뉴를 닫습니다", "action": None})
+    return {"view": v["view"], "questions": [{"question": v.get("prompt") or v["title"], "header": v["view"][:12],
+                                              "options": opts, "multiSelect": False}],
+            "context": {"title": v["title"], "subtitle": v.get("subtitle"), "card": v.get("card")}}
+
+
+def build(conn, view, args, user):
+    if view == "home":
+        v = view_home(conn, user)
+        v["_self_action"] = _action("home", user=user)
+    elif view == "models":
+        v = view_home(conn, user, everyone=True)
+        v["_self_action"] = _action("models", user=user)
+    elif view == "model":
+        v = view_model(conn, args[0], user)
+        v["_self_action"] = _action("model", args[0], user=user)
+    elif view == "agent":
+        v = view_agent(conn, args[0], args[1], user)
+    else:
+        raise SystemExit(f"unknown view: {view}")
+    return v
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("view", choices=["home", "models", "model", "agent"])
+    ap.add_argument("args", nargs="*")
+    ap.add_argument("--user")
+    ap.add_argument("--format", choices=["md", "choices", "json"], default="md")
+    ap.add_argument("--page", type=int, default=1)
+    a = ap.parse_args()
+    need = {"model": 1, "agent": 2}.get(a.view, 0)
+    if len(a.args) < need:
+        ap.error(f"'{a.view}' needs {need} argument(s)")
+    user = a.user or db.resolve_username()
+    v = build(db.connect(), a.view, a.args, user)
+    if a.format == "json":
+        v.pop("_self_action", None)
+        print(json.dumps(v, ensure_ascii=False, indent=2))
+    elif a.format == "choices":
+        print(json.dumps(render_choices(v, a.page), ensure_ascii=False, indent=2))
+    else:
+        print(render_md(v))
+
+
+if __name__ == "__main__":
+    main()

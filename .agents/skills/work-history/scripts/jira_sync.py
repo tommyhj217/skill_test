@@ -10,7 +10,7 @@ Source: `sample` reads jira/samples/jira_search_response.json (no network). `jir
   JIRA_BASE_URL=https://your.atlassian.net  + JIRA_EMAIL + JIRA_API_TOKEN   (Cloud, basic auth)
   JIRA_BASE_URL=https://jira.company.com    + JIRA_PAT  + JIRA_DEPLOYMENT=server (Server/DC, bearer)
 Default source: `jira` when JIRA_BASE_URL is set, else `sample`.
-Field ids / roles: jira/jira_mapping.json · which agents per model: jira/agent_templates.json
+Field ids / roles: jira/jira_mapping.json · which agents per model: declared by each skill
 """
 import argparse
 import base64
@@ -34,10 +34,6 @@ def _load(name):
 
 def mapping():
     return _load("jira_mapping.json")
-
-
-def templates():
-    return _load("agent_templates.json")
 
 
 def default_source():
@@ -107,9 +103,13 @@ def upsert_model(conn, norm):
     return cur.lastrowid, True
 
 
-def agents_for(norm, tpl=None):
-    tpl = tpl or templates()
-    return tpl.get("by_product_line", {}).get(norm.get("product_line")) or tpl["default"]
+def agents_for(norm):
+    """Agents of a model = installed skills that declare themselves model agents for its product line.
+    No central list: dropping a skill folder (with the declaration) into any runner's skills dir adds it."""
+    import skills_registry as reg
+    return [{"skill": name, "role": sk["agent"].get("role")}
+            for name, sk in sorted(reg.agent_skills().items())
+            if reg.agent_applies(sk, norm.get("product_line"))]
 
 
 def generate_agents(conn, model_id, norm):

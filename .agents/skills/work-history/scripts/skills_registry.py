@@ -60,14 +60,74 @@ def _skill_roots():
 
 
 def _frontmatter(text):
+    """Tiny YAML-subset reader: top-level `key: value` plus one nested map (e.g. `metadata:`)."""
     m = re.match(r"^---\s*\n(.*?)\n---", text, re.S)
-    out = {}
-    if m:
-        for line in m.group(1).splitlines():
-            if ":" in line and not line.startswith(" "):
-                k, v = line.split(":", 1)
-                out[k.strip()] = v.strip().strip('"\'')
+    out, parent = {}, None
+    if not m:
+        return out
+    for line in m.group(1).splitlines():
+        if not line.strip() or line.lstrip().startswith("#") or ":" not in line:
+            continue
+        k, v = line.split(":", 1)
+        v = v.strip().strip('"\'')
+        if line[:1] in (" ", "\t") and parent is not None:
+            out[parent][k.strip()] = v
+        else:
+            parent = None
+            if v == "":
+                parent = k.strip()
+                out[parent] = {}
+            else:
+                out[k.strip()] = v
     return out
+
+
+def _csv(v):
+    if isinstance(v, list):
+        return [x.strip() for x in v if str(x).strip()]
+    return [x.strip() for x in str(v or "").split(",") if x.strip()]
+
+
+def _agent_decl(ui, meta):
+    """Normalize the 'this skill is a model agent' declaration.
+
+    Either in ui.json:          "agent": {"role": "qa", "product_lines": ["*"], "exclude_product_lines": [..]}
+                                (legacy: "agent": true + "role": "qa")
+    or in SKILL.md frontmatter: metadata:
+                                  model-agent: "true"
+                                  agent-role: qa
+                                  agent-product-lines: "TV, 모니터"      # or "*"
+                                  agent-exclude-product-lines: "액세서리"
+                                  agent-label: BOM 점검
+                                  agent-icon: 🧾
+                                  agent-order: 50          # position in the menu (default 100)
+    """
+    a = ui.get("agent")
+    if isinstance(a, dict):
+        decl = dict(a)
+    elif a is True:
+        decl = {"role": ui.get("role")}
+    elif str(meta.get("model-agent", "")).lower() in ("true", "yes", "1"):
+        decl = {"role": meta.get("agent-role"), "product_lines": _csv(meta.get("agent-product-lines")),
+                "exclude_product_lines": _csv(meta.get("agent-exclude-product-lines")),
+                "order": meta.get("agent-order")}
+    else:
+        return None
+    decl["product_lines"] = _csv(decl.get("product_lines")) or ["*"]
+    decl["exclude_product_lines"] = _csv(decl.get("exclude_product_lines"))
+    try:
+        decl["order"] = int(decl.get("order") or 100)
+    except ValueError:
+        decl["order"] = 100
+    return decl
+
+
+def agent_applies(skill, product_line):
+    d = skill.get("agent") or {}
+    if product_line in d.get("exclude_product_lines", []):
+        return False
+    lines = d.get("product_lines", ["*"])
+    return "*" in lines or product_line in lines
 
 
 def _normalize(d, name):
@@ -95,9 +155,24 @@ def load_skills():
                 continue  # same skill already found via another runner's folder
             ui = md.parent / "ui.json"
             desc = json.loads(ui.read_text(encoding="utf-8")) if ui.exists() else {}
-            skills[name] = _normalize({**skills.get(name, {}), **desc}, name) | {
-                "source": str(md.parent), "description": fm.get("description", "")[:200]}
+            meta = fm.get("metadata") if isinstance(fm.get("metadata"), dict) else {}
+            if meta.get("agent-label") and "label" not in desc:
+                desc["label"] = meta["agent-label"]
+            if meta.get("agent-icon") and "icon" not in desc:
+                desc["icon"] = meta["agent-icon"]
+            if "inputs" not in desc and meta.get("model-agent"):
+                desc["inputs"] = [{"name": "args", "label": "추가 지시", "type": "textarea", "default": ""}]
+                desc["prompt"] = f"/{name} {{jira_key}} ({{model_code}}) {{args}}"
+            sk = _normalize({**skills.get(name, {}), **desc}, name) | {
+                "source": str(md.parent), "description": fm.get("description", "")[:300]}
+            sk["agent"] = _agent_decl(desc, meta)
+            skills[name] = sk
     return skills
+
+
+def agent_skills():
+    """Every installed skill that declares itself a model agent (any runner's folder, any name)."""
+    return {k: v for k, v in load_skills().items() if v.get("agent")}
 
 
 def _score(skill, act):

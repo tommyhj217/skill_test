@@ -42,9 +42,12 @@ def _short(ts):
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--user")
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--user", default=argparse.SUPPRESS)   # accepted before or after the subcommand
+    ap = argparse.ArgumentParser(parents=[common])
     sub = ap.add_subparsers(dest="cmd", required=True)
+    _add = sub.add_parser
+    sub.add_parser = lambda *a, **k: _add(*a, parents=[common], **k)
     m = sub.add_parser("mine"); m.add_argument("--json", action="store_true"); m.add_argument("--limit", type=int, default=30)
     s = sub.add_parser("show"); s.add_argument("model"); s.add_argument("--json", action="store_true")
     a = sub.add_parser("add"); a.add_argument("code"); a.add_argument("--name"); a.add_argument("--line")
@@ -52,7 +55,7 @@ def main():
     u = sub.add_parser("use"); u.add_argument("model"); u.add_argument("skill"); u.add_argument("--summary")
     u.add_argument("--status", default="done", choices=["done", "failed"])
     args = ap.parse_args()
-    user = args.user or db.resolve_username()
+    user = getattr(args, "user", None) or db.resolve_username()
     conn = db.connect()
 
     if args.cmd == "mine":

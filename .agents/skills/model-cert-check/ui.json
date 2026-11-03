@@ -24,7 +24,15 @@
   ],
   "prompt": "/model-cert-check {jira_key} ({model_code}) 인증 체크리스트 — 지역: {regions}, 범위: {scope}, 출시: {launch_date}",
   "output": "markdown",
-  "agent": true,
-  "role": "cert",
+  "agent": {
+    "role": "cert",
+    "product_lines": [
+      "*"
+    ],
+    "exclude_product_lines": [
+      "액세서리"
+    ],
+    "order": 30
+  },
   "applies_to": {}
 }

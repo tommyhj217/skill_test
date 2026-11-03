@@ -47,14 +47,25 @@ def _rw_json(path, fn):
     return path
 
 
-def hooks_claude(root):
+CLAUDE_ALLOW = [f"Bash(python3 {d}/work-history/scripts/{f}:*)"
+                for d in (".agents/skills", ".claude/skills") for f in ("view.py", "models.py")]
+
+
+def hooks_claude(root, allow_menu=True):
     cmd = f'python3 "$CLAUDE_PROJECT_DIR/{REL}" --runner claude'
 
     def fn(cfg):
+        added = []
+        if allow_menu:
+            # The skill's `allowed-tools` only covers the turn it was invoked in; the menu's follow-up
+            # turns run view.py / models.py again, so allow exactly those two scripts for the project.
+            allow = cfg.setdefault("permissions", {}).setdefault("allow", [])
+            added = [x for x in CLAUDE_ALLOW if x not in allow]
+            allow += added
         a = _merge_event_hooks(cfg, "UserPromptSubmit", {"hooks": [{"type": "command", "command": cmd}]})
         b = _merge_event_hooks(cfg, "PostToolUse", {"matcher": "Bash|Edit|Write|Skill",
                                                     "hooks": [{"type": "command", "command": cmd}]})
-        return a or b
+        return a or b or bool(added)
     return _rw_json(root / ".claude" / "settings.json", fn)
 
 
@@ -116,10 +127,20 @@ def link(target, dest, copy=False):
     return f"copy    {dest}"
 
 
+def _is_agent_skill(d):
+    if not (d / "SKILL.md").exists():
+        return False
+    if d.name == "model-agents":                       # the menu itself
+        return True
+    ui = d / "ui.json"
+    if ui.exists() and json.loads(ui.read_text(encoding="utf-8")).get("agent"):
+        return True
+    return "model-agent:" in (d / "SKILL.md").read_text(encoding="utf-8").split("---", 2)[1]
+
+
 def bundle():
-    """work-history + the model agent skills next to it (model-agents entry + model-* agents)."""
-    return [SKILL_SRC] + [d for d in sorted(SKILL_SRC.parent.iterdir())
-                          if d != SKILL_SRC and d.name.startswith("model-") and (d / "SKILL.md").exists()]
+    """work-history + the model-agents menu + every sibling skill that declares itself a model agent."""
+    return [SKILL_SRC] + [d for d in sorted(SKILL_SRC.parent.iterdir()) if d != SKILL_SRC and _is_agent_skill(d)]
 
 
 def install_project(root, runners, copy=False, github_link=False):

@@ -28,7 +28,15 @@
   ],
   "prompt": "/model-test-plan {jira_key} ({model_code}) {level} 테스트 계획 — 지역: {regions}, 마감: {due} {notes}",
   "output": "markdown",
-  "agent": true,
-  "role": "qa",
+  "agent": {
+    "role": "qa",
+    "product_lines": [
+      "*"
+    ],
+    "exclude_product_lines": [
+      "액세서리"
+    ],
+    "order": 20
+  },
   "applies_to": {}
 }

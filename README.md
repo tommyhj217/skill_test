@@ -1,131 +1,130 @@
-# Model agents as skills + UI (sample)
+# Model agents — a menu skill with a dynamic UI
 
-Work that used to start from Jira (Jira model registered → agents created) now runs as **skills**.
-- Calling the skill shows **the models I ran first**.
-- Clicking a model shows **the available agents and whether I have used each**, and you can run them from there.
-- It works the same in chat (`/model-agents`) and in the web UI. It runs on Claude Code, Codex, Copilot CLI and Gemini CLI.
+**Purpose:** show each user **which models they are working on** and **which agents (skills) each model can use**, plus whether they have already used them. Users then run the agent they need from there.
 
-![models](docs/ui_models.png)
+- **No extra app.** The skill defines its screens, and each runner draws them in its own way:
+  - **Claude Code** shows them as choice prompts.
+  - **Codex, Copilot and Gemini** show them as a markdown numbered menu.
+  - **Your own host** renders the JSON.
+- **Any skill becomes an agent with a declaration.** Add `metadata` to a SKILL.md, or a `ui.json`. There is no central list to edit, and team-made skills join the menu the same way.
 
-## Test it now (sample data, no API calls)
-### In a runner (Claude Code, Codex, …)
-```bash
-export WORK_HISTORY_USER=alice                                   # the user (by default, the local part of your git email)
-python3 .agents/skills/work-history/scripts/db.py seed --reset   # load sample data
+## How it looks (real Claude Code, user bob)
 ```
-Then in the runner:
-- `/model-agents`: models I ran first.
-- `/model-agents MDL-101`: that model's agents with ✅ used / ⚪ unused.
-- `/model-test-plan MDL-101`: runs an agent. The agent skill records its own usage when it finishes (`models.py use`).
+/model-agents
+## bob 님이 진행 중인 모델
+**최근 실행한 모델**
+1. **TV-OLED65-X1 · 65인치 OLED TV X1** (MDL-101 · TV) — 최근 실행 … · 에이전트 1/5 사용 · 내 담당: QA
+2. **MON-27Q-PRO · 27인치 QHD 모니터 Pro** (MDL-102 · 모니터) — 최근 실행 … · 에이전트 1/5 사용 · 내 담당: QA
+3. …
+**내 담당 (아직 실행 안 함)**
+4. **SPK-BAR-500 · 사운드바 500** (MDL-103 · 오디오) — 에이전트 4개 · 아직 사용 안 함 · 내 담당: 개발
+[a] 다른 모델 보기 (1) · [b] 모델 등록
 
-### In the web UI
-```bash
-python3 .agents/skills/work-history/scripts/server.py --demo     # → http://127.0.0.1:8765 (alice, mock runner)
+> 2
+| # | 에이전트 | 내 사용 | 팀 | 담당 | 상태 |
+| 1 | 📐 사양 검토 `/model-spec-review` | ⚪ 미사용 | 팀 0회 (0명) | 담당 alice | 할 일 |
+| 2 | 🧪 테스트 계획 `/model-test-plan` | ✅ 사용함 1회 · 최근 … | 팀 1회 (1명) | 담당 bob (나) | 진행 중 |
+| 3 | ✅ 인증 체크리스트 `/model-cert-check` | ⚪ 미사용 | 팀 1회 (1명) | 담당 jiwoo | 진행 중 |
+| 4 | 📝 릴리즈 노트 `/model-release-note` | ⚪ 미사용 | … |
+| 5 | 🧾 BOM 점검 `/team-bom-check` | ⚪ 미사용 | … |        ← a team-made skill (metadata only)
+
+> 5
+→ input fields (pre-filled from the model) + how to run it on each runner: /team-bom-check · $team-bom-check · …
 ```
-1. Left **🧩 모델** tab: "최근 실행한 모델" (most recent first), then "다른 모델".
-2. Click a model. Each agent card shows:
-   - **✅ 사용함 · N회 · 최근 날짜** or **⚪ 미사용**,
-   - team usage and the owner,
-   - **▶ 실행** / **◫ 옆에** (open in a split pane) / **결과** (my latest result).
-3. Run it. The form is pre-filled from model info. After the run, that agent becomes "사용함" and the model moves to the top of the left list.
-4. **+ 모델**: register a model without Jira. Agents matching its product line are attached automatically.
-5. Other users' view: `server.py --db .agents/skills/work-history/data/work_history.db --user bob --runner mock --port 8766`
-   - Usage (✅/⚪) is **per user**. The team count is the total across users.
-   - Anyone can use any agent on any model. The owner (from Jira) is shown for reference only.
 
-### CLI (what the skill calls internally)
+## Try it
 ```bash
-S=.agents/skills/work-history/scripts
-python3 $S/models.py mine                     # models I ran first
-python3 $S/models.py show MDL-101             # agents with usage
-python3 $S/models.py add TV-NEW-01 --name "새 TV" --line TV --regions "KR, US"
-python3 $S/models.py use MDL-101 model-test-plan --summary "회귀 테스트 계획 작성"
+export WORK_HISTORY_USER=bob                                     # by default, the local part of your git email
+python3 .agents/skills/work-history/scripts/db.py seed --reset   # sample: 5 models, 4 users, usage history
 ```
-Tests: `cd .agents/skills/work-history && python3 tests/test_jira_agents.py -v && python3 tests/test_multi_runner.py -v` (34 tests)
+- **Claude Code / Codex / Copilot / Gemini:** type `/model-agents` (in Codex, `$model-agents`), or ask "내 모델 보여줘". Answer with a number to move to the next screen.
+- **Without a runner** (to see the screens directly):
+  ```bash
+  V=.agents/skills/work-history/scripts/view.py
+  python3 $V home                                   # my models
+  python3 $V model MDL-101                          # agents of a model + usage
+  python3 $V agent MDL-101 model-test-plan          # agent inputs + how to invoke on each runner
+  python3 $V model MDL-101 --format choices         # Claude Code choice-prompt format
+  python3 $V model MDL-101 --format json            # for your own host
+  ```
+- **Tests:** `cd .agents/skills/work-history && for t in test_view test_jira_agents test_multi_runner; do python3 tests/$t.py; done` (45 tests)
 
-## Sample data
-| Jira | Model | Product line | Agents created (assignee) |
-|---|---|---|---|
-| MDL-101 | TV-OLED65-X1 | TV | spec review (alice) · test plan (bob) · cert (jiwoo) · release note (tommyhj) |
-| MDL-102 | MON-27Q-PRO | 모니터 (Monitor) | same 4 |
-| MDL-103 | SPK-BAR-500 | 오디오 (Audio) | same 4 (dev bob, QA alice) |
-| MDL-104 | ACC-REMOTE-V2 | 액세서리 (Accessory) | **spec review and release note only**, per the product-line rule |
-| MDL-105 | TV-QLED55-S3 | TV | mostly done, with sample results |
-| MDL-106 (webhook) | MON-32S-M8 | 모니터 (Monitor) | created at registration time |
-
-- The Jira data is in `jira/samples/jira_search_response.json`, which uses the Jira Cloud REST v3 response format.
-- tommyhj's email is hidden in the sample data, as Jira Cloud often does. That user is matched by accountId instead.
-- **Sample usage:**
-  - alice ran MDL-101 (spec review ×2, cert), MDL-103 (release note) and MDL-105.
-  - bob ran test plans on MDL-101, 102 and 105.
-  - jiwoo ran certification on MDL-102 and 105.
-  - So each user sees a different "최근 실행한 모델" list.
-
-## Structure
+## How it works
 ```
 .agents/skills/
-├── model-agents/           Entry skill: models I ran → agents with usage → run the chosen agent
-├── model-spec-review/      ┐ Converted agents (one skill each)
-├── model-test-plan/        │   SKILL.md          instructions for the runner (gets model info via jira_sync.py show)
-├── model-cert-check/       │   ui.json           UI form (inputs prefilled from Jira fields, prompt, owner role)
-├── model-release-note/     ┘   examples/sample_output.md   sample result (used by the mock runner)
+├── model-agents/        Menu skill. SKILL.md tells the runner how to draw each screen from view.py
+├── model-spec-review/   ┐
+├── model-test-plan/     │ Agent skills: SKILL.md + ui.json (declaration, input form, request template)
+├── model-cert-check/    │
+├── model-release-note/  ┘
+├── team-bom-check/      Example of a team-made agent: declared only via frontmatter metadata (no ui.json)
 └── work-history/
-    ├── jira/
-    │   ├── jira_mapping.json      Jira custom field ids → model fields, role → person field
-    │   ├── agent_templates.json   which agents are created for a model (rules per product line)
-    │   └── samples/               sample Jira search response + webhook payload
-    ├── scripts/
-    │   ├── models.py              model-centric CLI (mine / show / add / use)
-    │   ├── jira_sync.py           (optional) Jira → models/agents, comment write-back, webhook
-    │   ├── server.py              UI + API (models, agents with usage, run, status, Jira comment, webhook)
-    │   ├── runner.py · runners.py run on each runner (claude/codex/copilot/gemini/mock)
-    │   ├── hook_logger.py         records work history automatically from each runner's hooks
-    │   ├── install.py             installs the skills and hooks into another project
-    │   └── db.py · seed.py        DB schema, sample data
-    ├── tests/                     34 tests (fake Jira server, fake CLIs)
-    └── ui/index.html
+    ├── scripts/view.py      Dynamic UI: view document → md / choices / json
+    ├── scripts/models.py    Model CLI: mine / show / add / use (record usage)
+    ├── ui/VIEW_SCHEMA.md    View document schema + how to declare an agent
+    ├── scripts/jira_sync.py (optional) import models from Jira, webhook, comment write-back
+    └── …                    DB, runner adapters, hooks, tests
 ```
-For Claude Code and Gemini, `.claude/skills/*` and `.gemini/skills/*` are symlinks into `.agents/skills`. Codex and Copilot read `.agents/skills` directly.
+`.claude/skills/*` and `.gemini/skills/*` are links to `.agents/skills`. Codex and Copilot read `.agents/skills` directly.
 
-## (Optional) Connecting Jira
-You can work without Jira, registering models with `models.py add` or **+ 모델**. Connect Jira only if you want to import or sync existing models from it.
+**Drawing a screen:** `view.py` creates one view document. The `model-agents` SKILL.md tells the runner which format to use:
 
-1. **Map the fields** in `jira/jira_mapping.json`:
-   - Set the model code, product line and other fields to your custom field ids. You can look them up with `GET /rest/api/3/field`.
-   - Set the person field for each role.
-   - If emails are hidden, map accountId to username under `users`.
-2. **Choose which agents to create** in `jira/agent_templates.json`, by role and by product line.
-3. **Set connection details** in environment variables:
-   ```bash
-   export JIRA_BASE_URL=https://your.atlassian.net JIRA_EMAIL=bot@company.com JIRA_API_TOKEN=…   # Cloud
-   # Server/DC: JIRA_BASE_URL=https://jira.company.com JIRA_PAT=… JIRA_DEPLOYMENT=server
-   python3 .agents/skills/work-history/scripts/jira_sync.py pull          # first import
-   ```
-4. **Automatic creation:** add a Jira webhook (Issue created / updated, JQL `issuetype = Model`) pointing to `https://<server>/api/jira/webhook?secret=<JIRA_WEBHOOK_SECRET>`. The server must be reachable from Jira.
-5. **Real runs:** start without `--runner mock` and the first installed runner (claude, codex, …) is used. Run permissions are set with `WORK_HISTORY_<RUNNER>_ARGS`.
+| Host | Format | Behavior |
+|---|---|---|
+| Has a choice tool (Claude Code `AskUserQuestion`) | `--format choices` | Up to 4 options per question, "더 보기" for paging. On the input screen, each field becomes a question. |
+| Others (Codex, Copilot, Gemini, any chat) | `--format md` | Printed as-is. The user answers with a number or letter. |
+| Your own host / portal / bot | `--format json` | Each item's `action.command` is the command for the next screen. |
 
-## Adding a new agent
-1. Create `.agents/skills/model-<name>/` with `SKILL.md`, `ui.json` (`"agent": true, "role": "..."`) and `examples/sample_output.md`.
-2. Add `{"skill": "model-<name>", "role": "..."}` to `jira/agent_templates.json`.
-3. Existing models get the new agent automatically the next time they are opened (`models.py show` or the UI).
+## Turning a skill into an agent (including team-made skills)
+Put a skill in any skill folder (`.agents/skills`, `.claude/skills`, `~/.claude/skills`, … or `WORK_HISTORY_SKILL_ROOTS`) and add this frontmatter. That's all it takes to join the menu:
+```yaml
+metadata:
+  model-agent: "true"
+  agent-role: dev
+  agent-product-lines: "TV, 모니터"   # or "*"
+  agent-label: BOM 점검
+  agent-icon: 🧾
+```
+- For custom input fields, add a `ui.json`. See `.agents/skills/work-history/ui/VIEW_SCHEMA.md`.
+- To make the menu count a run, end the skill with `models.py use <MODEL> <skill> --summary "…"`.
+- Claude Code, Codex and others ignore `metadata` and `ui.json`, so the skill still works normally on its own.
 
-## Multi-runner support
-| | Claude Code | Codex CLI | Copilot CLI | Gemini CLI |
-|---|---|---|---|---|
-| Skill folder | `.claude/skills` (link) | `.agents/skills` | `.agents/skills` | `.gemini/skills` (link) |
-| Automatic recording | `.claude/settings.json` | `.codex/hooks.json` | `.github/hooks/work-history.json` | `.gemini/settings.json` |
-| Run / continue | `claude -p` / `--resume` | `codex exec --json` / `exec resume` | `copilot -p` / `--resume` | `gemini -p` / `--resume` |
+## Installing into another project
+```bash
+python3 .agents/skills/work-history/scripts/install.py --project <path> [--runners claude,codex,copilot,gemini]
+```
+This copies or links the menu, the agent skills and work-history. For Claude Code it also adds:
+- automatic recording hooks,
+- **permissions for `view.py` and `models.py`**, so the scripts don't trigger a prompt on every screen.
 
-Add other CLIs in `runners.json`. To install into another project: `python3 .agents/skills/work-history/scripts/install.py --project <path>`.
+## Sample data
+| Model | Product line | Agents | Sample usage |
+|---|---|---|---|
+| MDL-101 TV-OLED65-X1 | TV | 5 (4 + BOM 점검) | alice: spec review ×2, cert · bob: test plan |
+| MDL-102 MON-27Q-PRO | 모니터 (Monitor) | 5 | bob: test plan · jiwoo: cert |
+| MDL-103 SPK-BAR-500 | 오디오 (Audio) | 4 | alice: release note |
+| MDL-104 ACC-REMOTE-V2 | 액세서리 (Accessory) | 2 (spec review and release note only) | none |
+| MDL-105 TV-QLED55-S3 | TV | 5 | alice, bob, jiwoo |
 
-## Verification status and limits
-- **Tested:**
-  - Sample data, webhook and UI flows (browser).
-  - Jira REST pull with pagination and auth headers, and ADF comments, against a fake Jira server.
-  - Claude Code real runs on the history flow.
-  - Calling `/model-agents MDL-104` from real Claude Code (`claude -p`) printed the agent usage table.
+Owners per model come from the role fields in the sample Jira data. Without Jira, register a model with `models.py add`.
+
+## (Optional) Jira, web UI, work history
+- **Jira:** `jira/jira_mapping.json` (field mapping) + `JIRA_BASE_URL`/`JIRA_EMAIL`/`JIRA_API_TOKEN` → `jira_sync.py pull`, webhook at `/api/jira/webhook`. Optional: the menu works without it.
+- **Web UI** (`server.py`): an earlier, separate UI. The menu doesn't need it. Delete it if you don't use it.
+- **Work history / multi-runner:** `hook_logger.py` and `runners.json` record prompts and tool runs from each runner, and can run skills headless.
+
+## Verification status
+- **Tested in real Claude Code (`claude -p`):**
+  - `/model-agents` → "2" → "5", over three turns: menu → model agents and usage → custom-skill input screen.
+  - The skill's `allowed-tools` covers only the first turn. Later turns need project permissions (added by `install.py`).
+  - The project must be trusted by opening it interactively in Claude Code once.
+- **Tested by unit tests (45):**
+  - choice format (≤4 options, paging),
+  - md and json formats,
+  - following the action commands through the full loop,
+  - agent declarations in a skill folder outside the repo.
 - **Not tested:**
-  - Calls to a real Jira instance.
-  - Running the agent skills (spec review and so on) with a real LLM. The demo uses the mock runner, and the agents' work itself is an example.
-  - Real CLIs other than Claude Code.
-- **Local use only:** the server is meant for one person on their own PC (127.0.0.1, user given by a startup option). Shared deployment needs SSO, an ingestion API and a local runner on each PC. See the previous discussion.
+  - Codex, Copilot and Gemini (not installed here). The md menu path is plain text output, but whether those runners follow the SKILL.md instructions well is unconfirmed.
+  - The interactive choice prompt (`AskUserQuestion`) in Claude Code. It can't be checked in headless mode.
+  - The actual work of the agents (spec review and so on). Those are examples.
+- **Codex:** `view.py` writes to the DB, so it can't run in the read-only sandbox. It needs the `workspace-write` mode.

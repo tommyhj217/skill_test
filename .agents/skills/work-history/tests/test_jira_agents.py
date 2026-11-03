@@ -51,12 +51,14 @@ class Ingest(unittest.TestCase):
         rep = jira_sync.ingest(self.conn, sample_issues())
         self.assertEqual(len(rep), 5)
         agents = db.list_agents(self.conn)
-        self.assertEqual(len(agents), 18)                       # 4 models × 4 + accessory × 2
+        # every installed agent skill that applies to the product line: TV/모니터 also get the team BOM skill
+        self.assertEqual(len(agents), 21)                       # 3 × 5 (TV, 모니터) + 오디오 × 4 + 액세서리 × 2
         acc = [a["skill_name"] for a in agents if a["jira_key"] == "MDL-104"]
         self.assertEqual(sorted(acc), ["model-release-note", "model-spec-review"])
         mdl101 = {a["skill_name"]: a["assignee"] for a in agents if a["jira_key"] == "MDL-101"}
         self.assertEqual(mdl101, {"model-spec-review": "alice", "model-test-plan": "bob",
-                                  "model-cert-check": "jiwoo", "model-release-note": "tommyhj"})  # pm via accountId map
+                                  "model-cert-check": "jiwoo", "model-release-note": "tommyhj",
+                                  "team-bom-check": "alice"})  # pm via accountId map
 
     def test_idempotent_and_assignee_follows_jira(self):
         issues = sample_issues()
@@ -77,7 +79,7 @@ class Ingest(unittest.TestCase):
     def test_webhook(self):
         payload = json.loads((SAMPLES / "webhook_issue_created.json").read_text(encoding="utf-8"))
         r = jira_sync.handle_webhook(self.conn, payload)
-        self.assertEqual((r["jira_key"], r["new_model"], len(r["agents_created"])), ("MDL-106", True, 4))
+        self.assertEqual((r["jira_key"], r["new_model"], len(r["agents_created"])), ("MDL-106", True, 5))
         bug = {"webhookEvent": "jira:issue_created", "issue": {"key": "BUG-1", "fields": {"issuetype": {"name": "Bug"}}}}
         self.assertTrue(jira_sync.handle_webhook(self.conn, bug)["ignored"])
 

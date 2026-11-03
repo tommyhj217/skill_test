@@ -30,7 +30,13 @@
   ],
   "prompt": "/model-spec-review {jira_key} ({model_code}) 사양 검토 — 범위: {focus}, 사양서: {spec} {notes}",
   "output": "markdown",
-  "agent": true,
-  "role": "dev",
+  "agent": {
+    "role": "dev",
+    "product_lines": [
+      "*"
+    ],
+    "exclude_product_lines": [],
+    "order": 10
+  },
   "applies_to": {}
 }

@@ -12,8 +12,9 @@ Agent Skills (Claude Code, Codex, Copilot CLI, Gemini CLI).
 The request names a Jira key (e.g. `MDL-101`) and/or a model code. Get the model's fields with:
 
 ```bash
-python3 .agents/skills/work-history/scripts/jira_sync.py show <JIRA_KEY> --json
+python3 <skills dir>/work-history/scripts/jira_sync.py show <JIRA_KEY> --json
 ```
+(`<skills dir>` = the folder that contains this skill, e.g. `.agents/skills` or `.claude/skills`.)
 (fields: jira_key, model_code, model_name, product_line, status, due, spec_url, regions, launch_date, roles).
 If a Jira MCP/connector is available you may read the issue directly instead.
 
@@ -25,7 +26,7 @@ If a Jira MCP/connector is available you may read the issue directly instead.
 ## Record usage (always, at the end)
 So the model menu (`model-agents` skill / UI) shows this agent as used:
 ```bash
-python3 .agents/skills/work-history/scripts/models.py use <JIRA_KEY or MODEL_CODE> model-release-note --summary "<one-line result>"
+python3 <skills dir>/work-history/scripts/models.py use <JIRA_KEY or MODEL_CODE> model-release-note --summary "<one-line result>"
 ```
 Use `--status failed` if you could not finish. (Runs started from the work-history UI are recorded automatically.)
 
