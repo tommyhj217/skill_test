@@ -103,14 +103,95 @@ class Views(unittest.TestCase):
         self.assertTrue(next(i for i in mv["sections"][0]["items"] if i["id"] == "model-release-note")["used"])
         self.assertEqual(view("home", user="jiwoo")["sections"][0]["items"][0]["id"], "MDL-103")
 
-    def test_choices(self):
-        opts = view("model", "MDL-101", fmt="choices")["questions"][0]["options"]
-        self.assertLessEqual(len(opts), 4)
-        self.assertTrue(opts[-1]["label"].startswith("더 보기"))
-        page2 = json.loads(sh(opts[-1]["action"]["command"]))["questions"][0]["options"]
-        self.assertIn("🧾 BOM 점검", [o["label"] for o in page2])
-        qs = view("agent", "MDL-101", "model-test-plan", fmt="choices")["questions"]
-        self.assertTrue(all(2 <= len(q["options"]) <= 4 for q in qs))
+    # ── choices (AskUserQuestion-shaped): paging, follow-ups, rounds, applying values ──
+
+    def pages_of(self, *args, user="alice"):
+        first = view(*args, user=user, fmt="choices")
+        pages = [first]
+        for p in range(2, first["pages"] + 1):
+            pages.append(view(*args, "--page", str(p), user=user, fmt="choices"))
+        return pages
+
+    def test_list_paging_keeps_every_item_and_action(self):
+        for args, user in ((("home",), "alice"), (("home",), "bob"), (("model", "MDL-101"), "alice")):
+            full = view(*args, user=user)
+            expected = [i["title"][:40] for s in full["sections"] for i in s["items"]] + \
+                       [a["label"][:40] for a in full["actions"]]
+            seen = []
+            for pg in self.pages_of(*args, user=user):
+                opts = pg["questions"][0]["options"]
+                self.assertTrue(2 <= len(opts) <= 4, (args, len(opts)))
+                seen += [o["label"] for o in opts if not o["label"].startswith("더 보기")]
+            self.assertEqual(seen, expected, args)
+        more = view("model", "MDL-101", fmt="choices")["questions"][0]["options"][-1]
+        self.assertIn("--page 2", more["action"]["command"])             # the more-option opens the next page
+
+    def chain(self, form, field):
+        """Walk a field's question + follow-ups like a host would; return all selectable values."""
+        q = next(q for r in form["rounds"] for q in r if q["field"] == field)
+        values = []
+        while q:
+            self.assertTrue(2 <= len(q["options"]) <= 4)
+            values += [o["value"] for o in q["options"] if "value" in o]
+            nxt = next((o["followup"] for o in q["options"] if o.get("followup", "").startswith(field + "#")), None)
+            q = form["followups"].get(nxt) if nxt else None
+        return values
+
+    def test_select_over_4_options_uses_followup(self):
+        form = view("agent", "MDL-101", "model-spec-review", fmt="choices")     # focus: 5 options
+        first = form["rounds"][0][0]
+        self.assertEqual([o["label"] for o in first["options"]][-1], "다른 값 보기 (2)")
+        self.assertEqual(first["options"][0]["value"], "전체")                  # current value first
+        self.assertEqual(sorted(self.chain(form, "focus")), sorted(["전체", "전원", "디스플레이", "통신", "기구"]))
+
+    def test_big_form_rounds_and_followups(self):
+        d = EXTRA / "big-form-agent"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "SKILL.md").write_text("---\nname: big-form-agent\ndescription: test\n---\n", encoding="utf-8")
+        regions = ["KR", "US", "EU", "JP", "CN", "IN", "BR", "AU", "CA"]
+        (d / "ui.json").write_text(json.dumps({
+            "label": "큰 폼", "agent": {"role": "qa", "product_lines": ["*"]},
+            "inputs": [{"name": "region", "label": "지역", "type": "select", "options": regions, "default": "EU"}] +
+                      [{"name": f"f{i}", "label": f"필드{i}", "type": "text", "default": f"d{i}"} for i in range(1, 6)],
+            "prompt": "/big-form-agent {key} {region} {f1} {f5}"}, ensure_ascii=False), encoding="utf-8")
+        try:
+            form = view("agent", "MDL-101", "big-form-agent", fmt="choices")
+            self.assertEqual([len(r) for r in form["rounds"]], [4, 2])             # 6 fields → 2 rounds
+            vals = self.chain(form, "region")
+            self.assertEqual(sorted(vals), sorted(regions))                        # 9 values, none lost
+            self.assertEqual(len(vals), 9)
+            self.assertEqual(vals[0], "EU")
+            conf = view("agent", "MDL-101", "big-form-agent", "--set", "region=br", "--set", "f5=마지막",
+                        fmt="choices")
+            self.assertEqual(conf["invoke"]["prompt"], "/big-form-agent MDL-101 BR d1 마지막")
+        finally:
+            for f in d.iterdir():
+                f.unlink()
+            d.rmdir()
+
+    def test_set_applies_to_invoke(self):
+        conf = view("agent", "MDL-101", "model-spec-review", "--set", "'focus=기구'", "--set", "'notes=EU 대기전력'",
+                    fmt="choices")
+        self.assertEqual(conf["view"], "confirm")
+        self.assertEqual(conf["context"]["values"]["focus"], "기구")
+        self.assertEqual(sorted(conf["context"]["changed"]), ["focus", "notes"])
+        for runner, prefix in (("claude", "/model-spec-review"), ("codex", "$model-spec-review")):
+            line = conf["invoke"]["by_runner"][runner]
+            self.assertTrue(line.startswith(prefix) and "범위: 기구" in line and "EU 대기전력" in line, line)
+        self.assertEqual([o["label"] for o in conf["questions"][0]["options"]], ["실행", "값 다시 고르기", "취소"])
+        md = view("agent", "MDL-101", "model-spec-review", "--set", "focus=통신", fmt="md")
+        self.assertIn("| 검토 범위 (`focus`) | 통신 ✏️", md)
+        self.assertIn("범위: 통신", md)
+
+    def test_set_invalid_values(self):
+        cmd = f"{sys.executable} {SCRIPTS / 'view.py'} agent MDL-101 model-spec-review --user alice"
+        bad = subprocess.run(cmd + " --set focus=배터리 --set nope=1", shell=True, capture_output=True, text=True,
+                             env=os.environ)
+        self.assertEqual(bad.returncode, 1)
+        self.assertIn("'배터리' 는 선택지에 없습니다", bad.stdout)
+        self.assertIn("알 수 없는 입력: nope", bad.stdout)
+        ok = view("agent", "MDL-101", "model-test-plan", "--set", "level=FULL", fmt="json")   # case-insensitive
+        self.assertEqual(ok["form"]["values"]["level"], "full")
 
     def test_markdown(self):
         md = view("model", "MDL-101", fmt="md")

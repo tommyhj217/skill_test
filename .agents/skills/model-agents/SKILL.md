@@ -25,23 +25,35 @@ view document that `scripts/view.py` (in this skill's folder) produces.
 If the user already named a model (`MDL-101`, `TV-OLED65-X1`) start at step 2; if they named a model and an agent, step 3.
 
 ## How to draw a screen — pick by what you can do
-1. **You have an "ask the user to pick" tool** (e.g. Claude Code `AskUserQuestion`):
-   run the view with `--format choices`. If it has `context.card`, print that as a 2-column table first.
-   Pass `questions` to the tool unchanged except for removing each option's `action` key (keep labels and
-   descriptions exactly). When the user picks an option, run that option's `action.command` with
-   `--format choices` appended to get the next screen. "더 보기" options already contain the next page command.
+1. **You have an "ask the user to pick" tool** (e.g. Claude Code `AskUserQuestion`) — run views with `--format choices`.
+   Every question already has 2–4 options; remove the keys the tool does not take (`id`, `field`, `value`,
+   `action`, `followup`, `run`) but keep labels/descriptions exactly.
+   - **Lists** (home / model): one question. Picked option → run its `action.command` + `--format choices`.
+     "더 보기 (n)" is just another option whose command opens the next page.
+   - **Agent form** (`view: form`): ask `rounds` in order, one tool call per round (≤ 4 questions each).
+     If the picked option has `followup`, ask `followups[<id>]` next (more values of a long select list).
+     The answer for a field is the picked option's `value`; if `value` is null or the user typed "Other", use
+     the typed text. Then run `submit.command` with one `--set '<name>=<value>'` per field and `--format choices`.
+   - **Confirm** (`view: confirm`): shows the applied values. "실행" → run the agent (below) with
+     `invoke.by_runner`; "값 다시 고르기" / "취소" → run that option's `action.command`.
 2. **Otherwise** (Codex, Copilot CLI, Gemini CLI, any chat): run with the default `--format md` and print the
-   output **verbatim** as your message. The user answers with a number (n-th item) or a letter (actions).
-   Next screen: item in step 1 → `view.py model <its key>`; agent row in step 2 → `view.py agent <model key> <its /skill name>`.
+   output **verbatim**. The user answers with a number (n-th item), a letter (actions), or on the agent screen
+   with values like `level=full` / natural language. Next screen: item in step 1 → `view.py model <its key>`;
+   agent row in step 2 → `view.py agent <model key> <its /skill name>`; values → the same agent view with
+   `--set '<name>=<value>'` for each changed field (shows ✏️ on changed values and the updated request).
    If unsure, run the same view with `--format json` and use the item's `action.command`.
 3. **A custom host / portal** calls `view.py … --format json` itself and renders it (schema: `VIEW_SCHEMA.md`).
 
+Invalid values (unknown field, value not among a select's options) are reported as ⚠ lines at the top of
+the output — show them and ask again; there is no need to check the exit code.
+
+**Run every `view.py` / `models.py` command on its own, exactly in the form shown** (relative path, no `;`, `&&`,
+pipes, redirections or `echo`). Only that form is pre-approved; anything else stops at a permission prompt.
+
 ## Running an agent (step 3)
-- Show the inputs and defaults; ask only for what the user wants to change (with option 1, `--format choices`
-  turns select fields into questions).
-- Then run the agent skill: use the line for your runner from `invoke.by_runner`
-  (Claude `/skill …`, Codex `$skill …`, others "Use the … skill: …"), i.e. load that skill and follow its SKILL.md
-  with that request.
+- Only after the user confirms. Use the request line for your runner from `invoke.by_runner` **of the view that
+  was rendered with the user's `--set` values** (Claude `/skill …`, Codex `$skill …`, others "Use the … skill: …"),
+  i.e. load that skill and follow its SKILL.md with that request.
 - When it is done, run `after.record_use` (fill in a one-line summary; `--status failed` if it failed), then show
   step 2 again so the user sees the agent marked ✅.
 

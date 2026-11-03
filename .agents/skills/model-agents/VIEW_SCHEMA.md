@@ -30,9 +30,11 @@ No host needs to know about models or agents — only this schema.
   "form": {                                                                      // agent view only
     "fields": [ { "name": "level", "label": "테스트 수준", "type": "select | text | textarea",
                   "options": ["smoke", "regression", "full"], "default": "regression" } ],
+    "values": { "level": "regression", … },  "submitted": false,  "errors": [],
+    "submit": { "command": "python3 …/view.py agent MDL-101 model-test-plan --user alice", "arg": "--set", "format": "{name}={value}" },
     "prompt_template": "/model-test-plan {key} ({model_code}) {level} …",
     "context": { "key": "MDL-101", "model_code": "TV-OLED65-X1", … } },
-  "invoke": { "skill": "model-test-plan", "default_prompt": "…",
+  "invoke": { "skill": "model-test-plan", "prompt": "… (with --set values applied)",
               "by_runner": { "claude": "/model-test-plan …", "codex": "$model-test-plan …", "copilot": "Use the …", "gemini": "Use the …" } },
   "after": { "record_use": "python3 …/model-agents/scripts/models.py use MDL-101 model-test-plan --summary \"…\"" },
   "actions": [ { "id": "home", "label": "내 모델 목록", "action": { "view": "home", "command": "…" } } ],
@@ -44,10 +46,40 @@ Navigation: run `action.command` of the item/action the user picked. Each comman
 (add `--format json|choices` as needed). The flow is home → model → agent → (run the skill) → model.
 
 ## Choices (`--format choices`)
-`{"view", "questions": [{question, header, multiSelect, options: [{label, description, action}]}], "context"}`
-— at most 4 options per question (a "더 보기" option carries the next page's command). On the agent view each
-form field becomes a question (max 4), and `then` / `after` tell the host what to run next.
-Remove the `action` keys before passing `questions` to a tool that does not accept extra keys.
+Shaped for `AskUserQuestion` (2–4 options per question, ≤ 4 questions per call). Nothing is cut off:
+
+**Lists** (`home`, `models`, `model`) — items and actions form one option list, paged as 3 + "더 보기 (n)":
+```jsonc
+{ "view": "model", "page": 1, "pages": 2,
+  "questions": [ { "id": "model", "question": "어떤 에이전트를 실행할까요?", "header": "model",
+                   "options": [ { "label": "📐 사양 검토", "description": "✅ 사용함 2회 · …", "action": { "command": "…" } },
+                                …,
+                                { "label": "더 보기 (3)", "action": { "command": "… --format choices --page 2" } } ] } ],
+  "context": { "title", "subtitle", "card" } }
+```
+**Agent form** (`view: form`) — one question per field, split into `rounds` of ≤ 4; a select with > 4 options
+shows 3 values + "다른 값 보기 (n)" whose `followup` id names the next question in `followups`:
+```jsonc
+{ "view": "form",
+  "rounds": [ [ { "id": "focus", "field": "focus", "question": "검토 범위?", "header": "검토 범위",
+                  "options": [ { "label": "전체", "description": "현재 값", "value": "전체" }, { "label": "전원", "value": "전원" },
+                               { "label": "디스플레이", "value": "디스플레이" },
+                               { "label": "다른 값 보기 (2)", "followup": "focus#2" } ] },
+                { "id": "notes", "field": "notes", "options": [ { "label": "비워 두기", "value": "" },
+                                                               { "label": "직접 입력", "value": null } ] } ] ],
+  "followups": { "focus#2": { "id": "focus#2", "field": "focus", "options": [ { "label": "통신", "value": "통신" }, { "label": "기구", "value": "기구" } ] } },
+  "submit": { "command": "python3 …/view.py agent MDL-101 model-spec-review --user alice", "arg": "--set", "format": "{name}={value}" } }
+```
+Answer of a field = picked option's `value` (`null` / "Other" → the typed text). Apply them with
+`submit.command --set 'focus=기구' --set 'notes=…' --format choices`.
+
+**Confirm** (`view: confirm`, after `--set`) — the applied `context.values` (+ `changed`), the final `invoke`
+and one question: 실행 (`run: true` → use `invoke.by_runner`) / 값 다시 고르기 / 취소.
+Invalid values (unknown field, value not among a select's options) → the view lists them in `form.errors`
+(md: ⚠ lines) and the process exits with code 1.
+
+Remove the extra keys (`id`, `field`, `value`, `action`, `followup`, `run`) before passing `questions` to a tool
+that does not accept them.
 
 ## Declaring an agent skill
 A skill shows up as an agent of matching models when it declares itself. No central list; any runner's

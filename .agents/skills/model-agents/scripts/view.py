@@ -12,6 +12,8 @@ Views (each item's `action.command` produces the next view):
   view.py model MDL-101            agents available for the model + whether I / the team used them
   view.py agent MDL-101 <skill>    the agent's form (fields from the skill's ui.json, defaults from the model)
                                    + how to invoke the skill on each runner
+          [--set FIELD=VALUE …]    apply the user's choices → the invoke lines use them (select values are
+                                   validated); with --format choices this returns a confirm question
 Common: --user NAME (default: MODEL_AGENTS_USER → git e-mail → OS user), --page N (choices paging)
 Schema: ../VIEW_SCHEMA.md
 """
@@ -29,7 +31,9 @@ import store  # noqa: E402
 SCRIPTS = Path(__file__).resolve().parent
 ROLE = {"dev": "개발", "qa": "QA", "cert": "인증", "pm": "PM"}
 ST = {"todo": "할 일", "in_progress": "진행 중", "done": "완료"}
-PAGE = 3  # items per AskUserQuestion page (+1 slot for "더 보기")
+MAX_OPTS = 4   # AskUserQuestion: 2–4 options per question (it adds its own "Other" for free text)
+MAX_QS = 4     # … and at most 4 questions per call
+PAGE = MAX_OPTS - 1   # a page shows 3 options + "더 보기" when more remain
 
 
 def _script(name):
@@ -156,7 +160,29 @@ def view_model(conn, ref, user):
             "prompt": "어떤 에이전트를 실행할까요?"}
 
 
-def view_agent(conn, ref, skill, user):
+class FormError(ValueError):
+    pass
+
+
+def apply_values(fields, chosen):
+    """Merge the user's choices into the form; validate names and select options."""
+    names = {f["name"]: f for f in fields}
+    errors = [f"알 수 없는 입력: {k} (가능: {', '.join(names)})" for k in chosen if k not in names]
+    final = {}
+    for f in fields:
+        v = chosen.get(f["name"], f["default"])
+        if f.get("options") and f["name"] in chosen:
+            match = next((o for o in f["options"] if o.lower() == str(v).strip().lower()), None)
+            if match is None:
+                errors.append(f"{f.get('label', f['name'])}: '{v}' 는 선택지에 없습니다 ({', '.join(f['options'])})")
+            v = match or f["default"]
+        f["value"] = v
+        f["changed"] = f["name"] in chosen and v != f["default"]
+        final[f["name"]] = v
+    return final, errors
+
+
+def view_agent(conn, ref, skill, user, chosen=None):
     m = store.resolve_model(conn, ref)
     sk = reg.load_agents().get(skill)
     if not m or not sk:
@@ -168,19 +194,23 @@ def view_agent(conn, ref, skill, user):
         fld = {k: i[k] for k in ("name", "label", "type", "options") if k in i}
         fld["default"] = reg.fill(str(i.get("default", "")), ctx)
         fields.append(fld)
-    values = {f["name"]: f["default"] for f in fields}
+    values, errors = apply_values(fields, chosen or {})
     prompt = reg.fill(sk["prompt"], {**ctx, **values})
     invoke = {k: reg.for_runner(k, prompt, skill) for k in reg.SKILL_SYNTAX}
-    model_arg = m["key"]
+    key = m["key"]
+    base = _action("agent", key, skill, user=user)
     return {"view": "agent", "user": user, "title": f"{sk.get('icon', '')} {sk['label']} — {m['model_code']}".strip(),
             "subtitle": sk.get("description", "")[:200],
-            "form": {"fields": fields, "prompt_template": sk["prompt"], "context": {k: v for k, v in ctx.items()
-                                                                                    if isinstance(v, (str, int, float))}},
-            "invoke": {"skill": skill, "default_prompt": prompt, "by_runner": invoke},
-            "after": {"record_use": f"python3 {_script('models.py')} use {model_arg} {skill} "
+            "form": {"fields": fields, "values": values, "submitted": chosen is not None, "errors": errors,
+                     "prompt_template": sk["prompt"],
+                     "context": {k: v for k, v in ctx.items() if isinstance(v, (str, int, float))},
+                     # apply choices: <command> --set name=value … (one --set per field, shell-quoted)
+                     "submit": {"command": base["command"], "arg": "--set", "format": "{name}={value}"}},
+            "invoke": {"skill": skill, "prompt": prompt, "by_runner": invoke},
+            "after": {"record_use": f"python3 {_script('models.py')} use {key} {skill} "
                                     f"--summary \"<한 줄 결과>\"" + (f" --user {user}" if user else "")},
             "sections": [],
-            "actions": [{"id": "back", "label": f"{m['model_code']} 에이전트 목록", "action": _action("model", model_arg, user=user)},
+            "actions": [{"id": "back", "label": f"{m['model_code']} 에이전트 목록", "action": _action("model", key, user=user)},
                         {"id": "home", "label": "내 모델 목록", "action": _action("home", user=user)}],
             "prompt": "이대로 실행할까요? (기본값을 쓰거나 바꿀 값을 알려 주세요)"}
 
@@ -189,6 +219,8 @@ def view_agent(conn, ref, skill, user):
 
 def render_md(v):
     out = [f"## {v['title']}"]
+    for e in (v.get("form") or {}).get("errors", []):
+        out.append(f"⚠ {e}")
     if v.get("subtitle"):
         out.append(f"_{v['subtitle']}_")
     if v.get("card"):
@@ -197,83 +229,133 @@ def render_md(v):
         out += [f"| {c['label']} | {('[' + c['value'] + '](' + c['link'] + ')') if c.get('link') else c['value']} |"
                 for c in v["card"]]
     n = 0
-    numbered = []
     for sec in v.get("sections", []):
         out.append(f"\n**{sec['title']}**\n")
         if v["view"] == "model":
             out.append("| # | 에이전트 | 내 사용 | 팀 | 담당 | 상태 |\n|---|---|---|---|---|---|")
             for it in sec["items"]:
                 n += 1
-                numbered.append(it)
                 b = [x["text"] for x in it["badges"]]
                 out.append(f"| {n} | {it['title']} `/{it['id']}` | {b[0]} | {b[1]} | {b[2]} | {b[3]} |")
         else:
             for it in sec["items"]:
                 n += 1
-                numbered.append(it)
                 sub = f" ({it['subtitle']})" if it.get("subtitle") else ""
                 out.append(f"{n}. **{it['title']}**{sub} — " + " · ".join(x["text"] for x in it["badges"]))
-    if v.get("form"):
-        out.append("\n| 입력 | 기본값 | 선택지 |\n|---|---|---|")
-        for f in v["form"]["fields"]:
-            out.append(f"| {f.get('label', f['name'])} (`{f['name']}`) | {f['default'] or '—'} | "
+    form = v.get("form")
+    if form:
+        out.append("\n| 입력 | 값 | 선택지 |\n|---|---|---|")
+        for f in form["fields"]:
+            val = (f["value"] or "—") + (" ✏️" if f.get("changed") else "")
+            out.append(f"| {f.get('label', f['name'])} (`{f['name']}`) | {val} | "
                        f"{', '.join(f.get('options', [])) or '자유 입력'} |")
-        out.append("\n**실행 방법** (러너별)")
-        for k, p in v["invoke"]["by_runner"].items():
-            out.append(f"- {k}: `{p}`")
+        out.append("\n**실행 요청** (러너별)")
+        out += [f"- {k}: `{p}`" for k, p in v["invoke"]["by_runner"].items()]
         out.append(f"\n실행 후 기록: `{v['after']['record_use']}`")
     if v.get("note"):
         out.append(f"\n> {v['note']}")
     if v.get("empty"):
         out.append(f"\n{v['empty']}")
     acts = [a["label"] for a in v.get("actions", [])]
-    letters = "abcdefgh"
     if acts:
-        out.append("\n" + " · ".join(f"[{letters[i]}] {a}" for i, a in enumerate(acts)))
-    if v.get("form"):
-        out.append("\n**이대로 실행할까요?** '실행'이라고 답하거나 바꿀 값을 알려 주세요"
-                   + (" (또는 문자로 이동)." if acts else "."))
+        out.append("\n" + " · ".join(f"[{'abcdefgh'[i]}] {a}" for i, a in enumerate(acts)))
+    if form:
+        out.append("\n**이대로 실행할까요?** '실행'이라고 답하거나 바꿀 값을 알려 주세요 (예: `level=full`)"
+                   + (" 또는 문자로 이동." if acts else "."))
     elif v.get("prompt"):
         hint = f"번호(1–{n})" if n else ""
         out.append(f"\n**{v['prompt']}** {hint}{' 또는 ' if hint and acts else ''}{'문자' if acts else ''}로 답해 주세요.")
     return "\n".join(out)
 
 
+def _paged(options, more_label, page_ref):
+    """Split options into pages of ≤4: 3 + a 'more' option pointing to the next page (last page may hold 4).
+    Returns [page1, page2, …]; page_ref(i) gives what the 'more' option of page i links to."""
+    pages, rest, i = [], list(options), 0
+    while rest:
+        if len(rest) <= MAX_OPTS:
+            pages.append(rest)
+            break
+        i += 1
+        pages.append(rest[:PAGE] + [{"label": more_label(len(rest) - PAGE), "description": "다음 선택지",
+                                     **page_ref(i)}])
+        rest = rest[PAGE:]
+    return pages
+
+
+def _field_questions(f):
+    """One question per field; select fields with > 4 options become a chain of follow-up questions."""
+    hdr = (f.get("label") or f["name"])[:12]
+    q = {"id": f["name"], "field": f["name"], "question": f"{f.get('label', f['name'])}?", "header": hdr,
+         "multiSelect": False}
+    if f.get("options"):
+        opts = sorted(f["options"], key=lambda o: o != f["value"])          # current value first
+        opts = [{"label": o[:40], "description": "현재 값" if o == f["value"] else "", "value": o} for o in opts]
+        pages = _paged(opts, lambda k: f"다른 값 보기 ({k})", lambda i: {"followup": f"{f['name']}#{i + 1}"})
+        if len(pages[0]) < 2:
+            pages[0].append({"label": "그대로", "description": "현재 값 유지", "value": f["value"]})
+        first = {**q, "options": pages[0]}
+        follow = {f"{f['name']}#{i + 1}": {**q, "id": f"{f['name']}#{i + 1}",
+                                          "question": f"{f.get('label', f['name'])}? (계속)", "options": p}
+                  for i, p in enumerate(pages[1:], start=1)}
+        for fq in follow.values():                                          # a follow-up needs ≥ 2 options
+            if len(fq["options"]) < 2:
+                fq["options"].append({"label": "처음 선택지로", "description": "", "followup": f["name"]})
+        return first, follow
+    cur = f["value"]
+    opts = [{"label": "현재 값 사용" if cur else "비워 두기", "description": cur or "이 값 없이 실행", "value": cur},
+            {"label": "직접 입력", "description": "'기타(Other)'에 값을 입력하세요", "value": None}]
+    if cur:
+        opts.insert(1, {"label": "비워 두기", "description": "이 값 없이 실행", "value": ""})
+    return {**q, "options": opts}, {}
+
+
 def render_choices(v, page=1):
-    """AskUserQuestion-shaped: max 4 options per question; overflow → '더 보기' with the next page command."""
+    """AskUserQuestion-shaped output. Every question has 2–4 options; nothing is cut off:
+    lists are paged ('더 보기' → next page command), forms are split into rounds of ≤4 questions and
+    select fields with > 4 options continue in follow-up questions. Option `value` is what to pass back."""
+    form = v.get("form")
+    if form and form["submitted"] and not form["errors"]:
+        vals = form["values"]
+        return {"view": "confirm",
+                "context": {"title": v["title"], "values": vals, "changed": [f["name"] for f in form["fields"] if f["changed"]]},
+                "questions": [{"id": "confirm", "question": "이 값으로 실행할까요?", "header": "실행 확인", "multiSelect": False,
+                               "options": [{"label": "실행", "description": v["invoke"]["prompt"][:120], "run": True},
+                                           {"label": "값 다시 고르기", "description": "선택 질문으로 돌아갑니다",
+                                            "action": {"command": form["submit"]["command"] + " --format choices"}},
+                                           {"label": "취소", "description": "에이전트 목록으로",
+                                            "action": v["actions"][0]["action"]}]}],
+                "invoke": v["invoke"], "after": v["after"]}
+    if form:
+        qs, follow = [], {}
+        for f in form["fields"]:
+            q, fu = _field_questions(f)
+            qs.append(q)
+            follow.update(fu)
+        return {"view": "form", "context": {"title": v["title"], "errors": form["errors"]},
+                "rounds": [qs[i:i + MAX_QS] for i in range(0, len(qs), MAX_QS)],
+                "followups": follow,
+                "submit": form["submit"],
+                "how": "Ask each round in order (one tool call per round). If the picked option has `followup`, ask "
+                       "followups[that id] next. Answer value = option `value` (null or 'Other' → the typed text). "
+                       "Then run submit.command with one `--set name=value` per field and `--format choices`."}
     items = [it for sec in v.get("sections", []) for it in sec["items"]]
-    qs = []
-    if v.get("form"):
-        for f in v["form"]["fields"][:4]:
-            opts = ([{"label": o, "description": "기본값" if o == f["default"] else ""} for o in f.get("options", [])][:4]
-                    if f.get("options") else
-                    [{"label": "기본값 사용", "description": f["default"] or "(비워 둠)"},
-                     {"label": "비워 두기", "description": "이 값 없이 실행"}])
-            if len(opts) < 2:
-                opts.append({"label": "비워 두기", "description": ""})
-            qs.append({"question": f"{f.get('label', f['name'])}?", "header": f["name"][:12],
-                       "options": opts, "multiSelect": False})
-        return {"view": v["view"], "questions": qs, "then": v["invoke"], "after": v["after"]}
-    start = (page - 1) * PAGE
-    chunk = items[start:start + PAGE]
     opts = [{"label": it["title"][:40], "description": " · ".join(b["text"] for b in it["badges"])[:120],
-             "action": it["action"]} for it in chunk]
-    more = len(items) - (start + len(chunk))
-    if more > 0:
-        nxt = {**v.get("_self_action", {})}
-        opts.append({"label": f"더 보기 ({more})", "description": "다음 페이지",
-                     "action": {"command": (nxt.get("command") or "") + f" --format choices --page {page + 1}"}})
-    else:
-        for a in v.get("actions", [])[:4 - len(opts)]:
-            opts.append({"label": a["label"][:40], "description": "", "action": a["action"]})
-    while len(opts) < 2:
-        opts.append({"label": "닫기", "description": "메뉴를 닫습니다", "action": None})
-    return {"view": v["view"], "questions": [{"question": v.get("prompt") or v["title"], "header": v["view"][:12],
-                                              "options": opts, "multiSelect": False}],
-            "context": {"title": v["title"], "subtitle": v.get("subtitle"), "card": v.get("card")}}
+             "action": it["action"]} for it in items]
+    opts += [{"label": a["label"][:40], "description": "", "action": a["action"]} for a in v.get("actions", [])]
+    self_cmd = (v.get("_self_action") or {}).get("command", "")
+    pages = _paged(opts, lambda k: f"더 보기 ({k})",
+                   lambda i: {"action": {"command": f"{self_cmd} --format choices --page {i + 1}"}})
+    cur = pages[min(page, len(pages)) - 1] if pages else []
+    while len(cur) < 2:
+        cur = cur + [{"label": "닫기", "description": "메뉴를 닫습니다", "action": None}]
+    return {"view": v["view"], "page": min(page, len(pages)) if pages else 1, "pages": len(pages),
+            "questions": [{"id": v["view"], "question": v.get("prompt") or v["title"], "header": v["view"][:12],
+                           "options": cur, "multiSelect": False}],
+            "context": {"title": v["title"], "subtitle": v.get("subtitle"), "card": v.get("card"), "empty": v.get("empty")}}
 
 
-def build(conn, view, args, user):
+def build(conn, view, args, user, chosen=None):
     if view == "home":
         v = view_home(conn, user)
         v["_self_action"] = _action("home", user=user)
@@ -284,10 +366,20 @@ def build(conn, view, args, user):
         v = view_model(conn, args[0], user)
         v["_self_action"] = _action("model", args[0], user=user)
     elif view == "agent":
-        v = view_agent(conn, args[0], args[1], user)
+        v = view_agent(conn, args[0], args[1], user, chosen)
     else:
         raise SystemExit(f"unknown view: {view}")
     return v
+
+
+def parse_sets(pairs):
+    out = {}
+    for p in pairs or []:
+        if "=" not in p:
+            raise SystemExit(f"--set expects name=value, got: {p}")
+        k, val = p.split("=", 1)
+        out[k.strip()] = val.strip()
+    return out
 
 
 def main():
@@ -297,12 +389,15 @@ def main():
     ap.add_argument("--user")
     ap.add_argument("--format", choices=["md", "choices", "json"], default="md")
     ap.add_argument("--page", type=int, default=1)
+    ap.add_argument("--set", action="append", metavar="NAME=VALUE", help="agent view: apply a chosen input value")
     a = ap.parse_args()
     need = {"model": 1, "agent": 2}.get(a.view, 0)
     if len(a.args) < need:
         ap.error(f"'{a.view}' needs {need} argument(s)")
+    if a.set and a.view != "agent":
+        ap.error("--set only applies to the agent view")
     user = a.user or store.resolve_username()
-    v = build(store.connect(), a.view, a.args, user)
+    v = build(store.connect(), a.view, a.args, user, parse_sets(a.set) if a.set else None)
     if a.format == "json":
         v.pop("_self_action", None)
         print(json.dumps(v, ensure_ascii=False, indent=2))
@@ -310,6 +405,8 @@ def main():
         print(json.dumps(render_choices(v, a.page), ensure_ascii=False, indent=2))
     else:
         print(render_md(v))
+    if v.get("form", {}).get("errors"):
+        sys.exit(1)            # invalid choices: the output explains them, exit code tells the host
 
 
 if __name__ == "__main__":

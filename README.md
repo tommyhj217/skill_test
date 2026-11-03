@@ -21,10 +21,21 @@ python3 .agents/skills/model-agents/scripts/models.py seed --reset  # load test 
   python3 $V home                               # my models (recently run first → owned but not run yet)
   python3 $V model MDL-101                      # agents of the model + ✅ used / ⚪ unused
   python3 $V agent MDL-101 model-test-plan      # inputs (pre-filled from the model) + how each runner invokes it
-  python3 $V model MDL-101 --format choices     # Claude Code choice prompts
+  python3 $V model MDL-101 --format choices     # Claude Code choice prompts (pages of 3 + "더 보기")
   python3 $V model MDL-101 --format json        # your own host
+  python3 $V agent MDL-101 model-spec-review --format choices                         # input form as questions
+  python3 $V agent MDL-101 model-spec-review --set focus=기구 --set "notes=EU 대기전력"  # apply chosen values
   ```
-- **Tests:** `python3 .agents/skills/model-agents/tests/test_model_agents.py` (14 tests)
+
+### Choice format and how choices are applied
+| Situation | Behavior |
+|---|---|
+| More than 4 list items (models, agents) | Items and actions go in one list: 3 per page + "더 보기 (n)" → the next page command (`--page N`). Nothing is dropped. |
+| More than 4 input fields | Split into `rounds` of ≤4 questions (one AskUserQuestion call per round). |
+| A select with more than 4 options | 3 options + "다른 값 보기 (n)" → a follow-up question (`followups`), chained as needed. |
+| Applying choices | Each question's chosen `value` (or Other text) → `view.py agent … --set name=value` → the execution request for each runner (`invoke.by_runner`) is rebuilt with those values, followed by a "실행 / 값 다시 고르기 / 취소" confirmation. In md, changed values are marked ✏️. |
+| Invalid value | Unknown field, or a value not among the select's options → ⚠ at the top of the output, exit code 1. |
+- **Tests:** `python3 .agents/skills/model-agents/tests/test_model_agents.py` (18 tests)
 
 Example (real Claude Code, user jiwoo):
 ```
@@ -88,8 +99,10 @@ This copies the menu and agent skills. For Claude Code it also adds permissions 
 - Claude Code applies them after the project is trusted (open it interactively once).
 
 ## Verification status
-- **Real Claude Code:** the multi-turn flow worked (`/model-agents` → number → agent list and usage → input screen).
-- **Unit tests:** 14 tests cover discovery, the 3 formats, the full loop, a drop-in skill and install.
+- **Real Claude Code:**
+  - The multi-turn flow worked: `/model-agents` → number → agent list and usage → input screen.
+  - A plain-language value change ("범위는 기구로…") was converted to `--set` and applied to the request.
+- **Unit tests:** 18 tests cover discovery, the 3 formats, paging, follow-up questions, applying and validating values, the full loop, a drop-in skill and install.
 - **Not tested:**
   - Codex, Copilot and Gemini (not installed here).
   - Claude Code's interactive choice prompt (can't be checked in headless mode).
